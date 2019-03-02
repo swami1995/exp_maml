@@ -70,6 +70,6 @@ register(
 register(
     '2DPointEnvCorner-v0',
     entry_point='maml_rl.envs.point_envs.point_env_2d_corner:MetaPointEnvCorner',
-    max_episode_steps=200
+    max_episode_steps=100
 
 )

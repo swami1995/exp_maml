@@ -1,3 +1,4 @@
+import ipdb
 import torch
 from torch.nn.utils.convert_parameters import (vector_to_parameters,
                                                parameters_to_vector)
@@ -74,13 +75,14 @@ class MetaLearner(object):
         """
         episodes = []
         for task in tasks:
+            # ipdb.set_trace()
             self.sampler.reset_task(task)
-            train_episodes = self.sampler.sample(self.policy,
+            train_episodes = self.sampler.sample(self.policy, task,
                 gamma=self.gamma, device=self.device)
 
             params = self.adapt(train_episodes, first_order=first_order)
 
-            valid_episodes = self.sampler.sample(self.policy, params=params,
+            valid_episodes = self.sampler.sample(self.policy, task, params=params,
                 gamma=self.gamma, device=self.device)
             episodes.append((train_episodes, valid_episodes))
         return episodes

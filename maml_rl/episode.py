@@ -3,7 +3,7 @@ import torch
 import torch.nn.functional as F
 
 class BatchEpisodes(object):
-    def __init__(self, batch_size, gamma=0.95, device='cpu'):
+    def __init__(self, batch_size, task, gamma=0.95, device='cpu'):
         self.batch_size = batch_size
         self.gamma = gamma
         self.device = device
@@ -18,6 +18,7 @@ class BatchEpisodes(object):
         self._rewards = None
         self._returns = None
         self._mask = None
+        self._task = task
 
     @property
     def observations(self):
@@ -75,6 +76,11 @@ class BatchEpisodes(object):
                 mask[:length, i] = 1.0
             self._mask = torch.from_numpy(mask).to(self.device)
         return self._mask
+
+    @property
+    def task(self):
+        return self._task
+    
 
     def gae(self, values, tau=1.0):
         # Add an additional 0 at the end of values for

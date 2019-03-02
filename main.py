@@ -5,6 +5,8 @@ import torch
 import json
 import ipdb
 import os
+import sys
+import matplotlib.pyplot as plt
 
 from maml_rl.metalearner import MetaLearner
 from maml_rl.policies import CategoricalMLPPolicy, NormalMLPPolicy
@@ -19,16 +21,33 @@ def total_rewards(episodes_rewards, aggregation=torch.mean):
         for rewards in episodes_rewards], dim=0))
     return rewards.item()
 
+def plotting(episodes, batch, save_folder,n):
+    for i in range(n):
+        train_ep = episodes[i][0]
+        val_ep = episodes[i][1]
+        task = episodes[i][0].task
+        train_obs = train_ep.observations[:,0].cpu().numpy()
+        val_obs = val_ep.observations[:,0].cpu().numpy()
+        corners = np.array([np.array([-2,-2]), np.array([2,-2]), np.array([-2,2]), np.array([2, 2])])
+        plt.plot(train_obs[:,0], train_obs[:,1], 'b')
+        plt.plot(val_obs[:,0], val_obs[:,1], 'k')
+        plt.scatter(corners[:,0], corners[:,1], s=10, color='g')
+        plt.scatter(task[None,0], task[None,1], s=10, color='r')
+        plt.savefig(os.path.join(save_folder,'plot-{0}-{1}.png'.format(batch,i)))
+        plt.clf()
+    return None
+
+
 def main(args):
     continuous_actions = (args.env_name in ['AntVel-v1', 'AntDir-v1',
         'AntPos-v0', 'HalfCheetahVel-v1', 'HalfCheetahDir-v1',
         '2DNavigation-v0', '2DPointEnvCorner-v0'])
 
     save_folder = './saves/{0}'.format(args.env_name+'/'+args.output_folder)
-    if args.output_folder!='maml-trial' or args.output_folder!='trial':
+    if args.output_folder!='maml-trial' and args.output_folder!='trial':
         i=0
         while os.path.exists(save_folder):
-            args.output_folder=i+1
+            args.output_folder=str(i+1)
             i+=1
             save_folder = './saves/{0}'.format(args.env_name+'/'+args.output_folder)
             log_directory = './logs/{0}'.format(args.env_name+'/'+args.output_folder)
@@ -39,6 +58,7 @@ def main(args):
         config = {k: v for (k, v) in vars(args).items() if k != 'device'}
         config.update(device=args.device.type)
         json.dump(config, f, indent=2)
+
 
     sampler = BatchSampler(args.env_name, batch_size=args.fast_batch_size,
         num_workers=args.num_workers)
@@ -55,6 +75,9 @@ def main(args):
     baseline = LinearFeatureBaseline(
         int(np.prod(sampler.envs.observation_space.shape)))
 
+    if args.load_dir is not None:
+        policy.load_state_dict(torch.load(args.load_dir))
+
     metalearner = MetaLearner(sampler, policy, baseline, gamma=args.gamma,
         fast_lr=args.fast_lr, tau=args.tau, device=args.device)
 
@@ -68,6 +91,12 @@ def main(args):
         print('total_rewards/before_update', total_rewards([ep.rewards for ep, _ in episodes]), batch)
         print('total_rewards/after_update', total_rewards([ep.rewards for _, ep in episodes]), batch)
         
+        # Plotting figure
+        plotting(episodes, batch, save_folder,args.num_plots)
+
+        if args.load_dir is not None:
+            sys.exit(0)
+            
         # Tensorboard
         writer.add_scalar('total_rewards/before_update',
             total_rewards([ep.rewards for ep, _ in episodes]), batch)
@@ -129,6 +158,10 @@ if __name__ == '__main__':
     # Miscellaneous
     parser.add_argument('--output-folder', type=str, default='maml',
         help='name of the output folder')
+    parser.add_argument('--load-dir', type=str, default=None,
+        help='name of the directory to load model')
+    parser.add_argument('--num-plots', type=int, default=1,
+        help='number of plots to save per iteration')
     parser.add_argument('--num-workers', type=int, default=mp.cpu_count() - 1,
         help='number of workers for trajectories sampling')
     parser.add_argument('--device', type=str, default='cpu',
