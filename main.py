@@ -67,18 +67,30 @@ def main(args):
             int(np.prod(sampler.envs.observation_space.shape)),
             int(np.prod(sampler.envs.action_space.shape)),
             hidden_sizes=(args.hidden_size,) * args.num_layers)
+        exp_policy = NormalMLPPolicy(
+            int(np.prod(sampler.envs.observation_space.shape)),
+            int(np.prod(sampler.envs.action_space.shape)),
+            hidden_sizes=(args.hidden_size,) * args.num_layers)
     else:
         policy = CategoricalMLPPolicy(
             int(np.prod(sampler.envs.observation_space.shape)),
             sampler.envs.action_space.n,
             hidden_sizes=(args.hidden_size,) * args.num_layers)
+        exp_policy = CategoricalMLPPolicy(
+            int(np.prod(sampler.envs.observation_space.shape)),
+            sampler.envs.action_space.n,
+            hidden_sizes=(args.hidden_size,) * args.num_layers)
+
     baseline = LinearFeatureBaseline(
+        int(np.prod(sampler.envs.observation_space.shape)))
+
+    exp_baseline = LinearFeatureBaseline(
         int(np.prod(sampler.envs.observation_space.shape)))
 
     if args.load_dir is not None:
         policy.load_state_dict(torch.load(args.load_dir))
 
-    metalearner = MetaLearner(sampler, policy, baseline, gamma=args.gamma,
+    metalearner = MetaLearner(sampler, policy, exp_policy, baseline, exp_baseline, gamma=args.gamma,
         fast_lr=args.fast_lr, tau=args.tau, device=args.device)
 
     for batch in range(args.num_batches):

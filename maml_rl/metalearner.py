@@ -27,11 +27,13 @@ class MetaLearner(object):
         Pieter Abbeel, "Trust Region Policy Optimization", 2015
         (https://arxiv.org/abs/1502.05477)
     """
-    def __init__(self, sampler, policy, baseline, gamma=0.95,
+    def __init__(self, sampler, policy, exp_policy, baseline, exp_baseline, gamma=0.95,
                  fast_lr=0.5, tau=1.0, device='cpu'):
         self.sampler = sampler
         self.policy = policy
+        self.exp_policy = exp_policy
         self.baseline = baseline
+        self.exp_baseline = exp_baseline
         self.gamma = gamma
         self.fast_lr = fast_lr
         self.tau = tau
