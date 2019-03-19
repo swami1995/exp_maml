@@ -22,7 +22,8 @@ class Policy(nn.Module):
         grads = torch.autograd.grad(loss, self.parameters(),
             create_graph=not first_order)
         updated_params = OrderedDict()
+        curr_params = self.named_parameters()
         for (name, param), grad in zip(self.named_parameters(), grads):
             updated_params[name] = param - step_size * grad
 
-        return updated_params
+        return curr_param, updated_params

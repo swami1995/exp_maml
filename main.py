@@ -88,7 +88,8 @@ def main(args):
         int(np.prod(sampler.envs.observation_space.shape)))
 
     if args.load_dir is not None:
-        policy.load_state_dict(torch.load(args.load_dir))
+        policy.load_state_dict(torch.load(args.load_dir+'.pt'))
+        exp_policy.load_state_dict(torch.load(args.load_dir+'-exp.pt'))
 
     metalearner = MetaLearner(sampler, policy, exp_policy, baseline, exp_baseline, gamma=args.gamma,
         fast_lr=args.fast_lr, tau=args.tau, device=args.device)
@@ -119,6 +120,9 @@ def main(args):
         with open(os.path.join(save_folder,
                 'policy-{0}.pt'.format(batch)), 'wb') as f:
             torch.save(policy.state_dict(), f)
+        with open(os.path.join(save_folder,
+                'policy-{0}-exp.pt'.format(batch)), 'wb') as f:
+            torch.save(exp_policy.state_dict(), f)
 
 
 if __name__ == '__main__':

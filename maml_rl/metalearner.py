@@ -66,10 +66,10 @@ class MetaLearner(object):
         # Get the loss on the training episodes
         loss = self.inner_loss(episodes)
         # Get the new parameters after a one-step gradient update
-        params = self.policy.update_params(loss, step_size=self.fast_lr,
+        curr_params, updated_params = self.policy.update_params(loss, step_size=self.fast_lr,
             first_order=first_order)
 
-        return params
+        return curr_params, updated_params
 
     def sample(self, tasks, first_order=False):
         """Sample trajectories (before and after the update of the parameters) 
@@ -79,12 +79,12 @@ class MetaLearner(object):
         for task in tasks:
             # ipdb.set_trace()
             self.sampler.reset_task(task)
-            train_episodes = self.sampler.sample(self.policy, task,
+            train_episodes = self.sampler.sample(self.exp_policy, task,
                 gamma=self.gamma, device=self.device)
 
-            params = self.adapt(train_episodes, first_order=first_order)
+            curr_params, updated_params = self.adapt(train_episodes, first_order=first_order)
 
-            valid_episodes = self.sampler.sample(self.policy, task, params=params,
+            valid_episodes = self.sampler.sample(self.policy, task, params=updated_params,
                 gamma=self.gamma, device=self.device)
             episodes.append((train_episodes, valid_episodes))
         return episodes
@@ -95,8 +95,8 @@ class MetaLearner(object):
             old_pis = [None] * len(episodes)
 
         for (train_episodes, valid_episodes), old_pi in zip(episodes, old_pis):
-            params = self.adapt(train_episodes)
-            pi = self.policy(valid_episodes.observations, params=params)
+            curr_params, updated_params = self.adapt(train_episodes)
+            pi = self.policy(valid_episodes.observations, params=updated_params)
 
             if old_pi is None:
                 old_pi = detach_distribution(pi)
@@ -130,9 +130,11 @@ class MetaLearner(object):
             old_pis = [None] * len(episodes)
 
         for (train_episodes, valid_episodes), old_pi in zip(episodes, old_pis):
-            params = self.adapt(train_episodes)
+            curr_params, updated_params = self.adapt(train_episodes)
+            old_pi = curr_params
             with torch.set_grad_enabled(old_pi is None):
-                pi = self.policy(valid_episodes.observations, params=params)
+                pi = self.policy(valid_episodes.observations, params=updated_params)
+                exp_pi = self.exp_policy(valid_episodes.observations)
                 pis.append(detach_distribution(pi))
 
                 if old_pi is None:
@@ -144,7 +146,7 @@ class MetaLearner(object):
                     weights=valid_episodes.mask)
 
                 log_ratio = (pi.log_prob(valid_episodes.actions)
-                    - old_pi.log_prob(valid_episodes.actions))
+                    - exp_pi.log_prob(valid_episodes.actions))
                 if log_ratio.dim() > 2:
                     log_ratio = torch.sum(log_ratio, dim=2)
                 ratio = torch.exp(log_ratio)
