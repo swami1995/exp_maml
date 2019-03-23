@@ -4,7 +4,7 @@ import multiprocessing as mp
 
 from maml_rl.envs.subproc_vec_env import SubprocVecEnv
 from maml_rl.episode import BatchEpisodes
-import ipdb
+import pdb
 def make_env(env_name):
     def _make_env():
         return gym.make(env_name)
@@ -32,11 +32,13 @@ class BatchSampler(object):
         while (not all(dones)) or (not self.queue.empty()):
             with torch.no_grad():
                 observations_tensor = torch.from_numpy(observations).type(torch.FloatTensor).to(device=device)
-                # ipdb.set_trace()
-                actions_tensor = policy(observations_tensor, params=params).sample()
+                # pdb.set_trace()
+                action_probs_tensor = policy(observations_tensor, params=params)
+                actions_tensor = action_probs_tensor.sample()
                 actions = actions_tensor.cpu().numpy()
+                action_probs = action_probs_tensor.log_prob(actions_tensor).detach().cpu().numpy()   ### not sure need to chec indexing
             new_observations, rewards, dones, new_batch_ids, _ = self.envs.step(actions)
-            episodes.append(observations, actions, rewards, batch_ids)
+            episodes.append(observations, actions, rewards, batch_ids, action_probs)
             observations, batch_ids = new_observations, new_batch_ids
         return episodes
 

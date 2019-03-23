@@ -26,4 +26,4 @@ class Policy(nn.Module):
         for (name, param), grad in zip(self.named_parameters(), grads):
             updated_params[name] = param - step_size * grad
 
-        return curr_param, updated_params
+        return curr_params, updated_params

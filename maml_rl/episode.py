@@ -1,6 +1,7 @@
 import numpy as np
 import torch
 import torch.nn.functional as F
+import pdb
 
 class BatchEpisodes(object):
     def __init__(self, batch_size, task, gamma=0.95, device='cpu'):
@@ -10,11 +11,13 @@ class BatchEpisodes(object):
 
         self._observations_list = [[] for _ in range(batch_size)]
         self._actions_list = [[] for _ in range(batch_size)]
+        self._action_probs_list = [[] for _ in range(batch_size)]
         self._rewards_list = [[] for _ in range(batch_size)]
         self._mask_list = []
 
         self._observations = None
         self._actions = None
+        self._action_probs = None
         self._rewards = None
         self._returns = None
         self._mask = None
@@ -43,6 +46,18 @@ class BatchEpisodes(object):
                 actions[:length, i] = np.stack(self._actions_list[i], axis=0)
             self._actions = torch.from_numpy(actions).to(self.device)
         return self._actions
+
+    @property    
+    def action_probs(self):
+        if self._action_probs is None:
+            action_probs_shape = self._action_probs_list[0][0].shape
+            action_probs = np.zeros((len(self), self.batch_size)
+                + action_probs_shape, dtype=np.float32)
+            for i in range(self.batch_size):
+                length = len(self._action_probs_list[i])
+                action_probs[:length, i] = np.stack(self._action_probs_list[i], axis=0)
+            self._action_probs = torch.from_numpy(action_probs).to(self.device)
+        return self._action_probs
 
     @property
     def rewards(self):
@@ -97,14 +112,14 @@ class BatchEpisodes(object):
 
         return advantages
 
-    def append(self, observations, actions, rewards, batch_ids):
-        for observation, action, reward, batch_id in zip(
-                observations, actions, rewards, batch_ids):
+    def append(self, observations, actions, rewards, batch_ids, action_probs):
+        for observation, action, reward, batch_id, action_prob in zip(
+                observations, actions, rewards, batch_ids, action_probs):
             if batch_id is None:
                 continue
             self._observations_list[batch_id].append(observation.astype(np.float32))
             self._actions_list[batch_id].append(action.astype(np.float32))
             self._rewards_list[batch_id].append(reward.astype(np.float32))
-
+            self._action_probs_list[batch_id].append(action_prob.astype(np.float32))
     def __len__(self):
         return max(map(len, self._rewards_list))

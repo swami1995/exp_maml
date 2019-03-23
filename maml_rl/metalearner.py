@@ -1,4 +1,4 @@
-import ipdb
+import pdb
 import torch
 from torch.nn.utils.convert_parameters import (vector_to_parameters,
                                                parameters_to_vector)
@@ -7,6 +7,7 @@ from torch.distributions.kl import kl_divergence
 from maml_rl.utils.torch_utils import (weighted_mean, detach_distribution,
                                        weighted_normalize)
 from maml_rl.utils.optimization import conjugate_gradient
+import torch.optim as optim
 
 class MetaLearner(object):
     """Meta-learner
@@ -38,8 +39,11 @@ class MetaLearner(object):
         self.fast_lr = fast_lr
         self.tau = tau
         self.to(device)
+        self.lr = 7e-4
+        self.eps = 1e-5
+        self.exp_optimizer = optim.Adam(self.exp_policy.parameters(), lr=self.lr, eps=self.eps)
 
-    def inner_loss(self, episodes, params=None):
+    def inner_loss(self, episodes, exp_update='dice', params=None):
         """Compute the inner loss for the one-step gradient update. The inner 
         loss is REINFORCE with baseline [2], computed on advantages estimated 
         with Generalized Advantage Estimation (GAE, [3]).
@@ -49,22 +53,36 @@ class MetaLearner(object):
         advantages = weighted_normalize(advantages, weights=episodes.mask)
 
         pi = self.policy(episodes.observations, params=params)
-        log_probs = pi.log_prob(episodes.actions)
+        exp_pi = self.exp_policy(episodes.observations)
+        exp_log_probs_non_diff = episodes.action_probs
+        exp_log_probs_diff = torch.zeros_like(exp_log_probs_non_diff)
+        log_probs = pi.log_prob(episodes.actions)       #### TODO: Think of better objectives (predicting the reward function, hypothesis testing etc. which are denser)
+                                                        ####       Sparse rewards don't make sense for GD especially likelihood based GD. 
+                                                        ####       Why even max^m the llhood wrt to actions taken by exploration agent.
+                                                        ####       also log_probs of unlikely actions would explode (esp given the off policy setting)
+                                                        ####       Hence need clipping etc. at least as in PPO etc.
+        if exp_update=='dice':
+            exp_log_probs_diff = exp_pi.log_prob(episodes.actions)
+            dice_wts = torch.exp(exp_log_probs_diff - exp_log_probs_non_diff)  #### TODO: This might be high variance so reconsider it later maybe.
+            log_probs *= dice_wts
         if log_probs.dim() > 2:
             log_probs = torch.sum(log_probs, dim=2)
+            exp_log_probs_diff = torch.sum(exp_log_probs_diff, dim=2)
+            exp_log_probs_non_diff = torch.sum(exp_log_probs_non_diff, dim=2)
+        wts = episodes.mask * torch.exp(log_probs.detach()-exp_log_probs_non_diff)     #### TODO: Needs more thorough investigation : May require better importance wts or find better alternatives
         loss = -weighted_mean(log_probs * advantages, dim=0,
-            weights=episodes.mask)
+            weights=wts)
 
         return loss
 
-    def adapt(self, episodes, first_order=False):
+    def adapt(self, episodes, first_order=False, exp_update='dice'):
         """Adapt the parameters of the policy network to a new task, from 
         sampled trajectories `episodes`, with a one-step gradient update [1].
         """
         # Fit the baseline to the training episodes
         self.baseline.fit(episodes)
         # Get the loss on the training episodes
-        loss = self.inner_loss(episodes)
+        loss = self.inner_loss(episodes, exp_update)
         # Get the new parameters after a one-step gradient update
         curr_params, updated_params = self.policy.update_params(loss, step_size=self.fast_lr,
             first_order=first_order)
@@ -124,17 +142,16 @@ class MetaLearner(object):
             return flat_grad2_kl + damping * vector
         return _product
 
-    def surrogate_loss(self, episodes, old_pis=None):
+    def surrogate_loss(self, episodes, old_pis=None, exp_update='dice'):
         losses, kls, pis = [], [], []
         if old_pis is None:
             old_pis = [None] * len(episodes)
 
         for (train_episodes, valid_episodes), old_pi in zip(episodes, old_pis):
             curr_params, updated_params = self.adapt(train_episodes)
-            old_pi = curr_params
+            # old_pi = curr_params
             with torch.set_grad_enabled(old_pi is None):
                 pi = self.policy(valid_episodes.observations, params=updated_params)
-                exp_pi = self.exp_policy(valid_episodes.observations)
                 pis.append(detach_distribution(pi))
 
                 if old_pi is None:
@@ -146,7 +163,7 @@ class MetaLearner(object):
                     weights=valid_episodes.mask)
 
                 log_ratio = (pi.log_prob(valid_episodes.actions)
-                    - exp_pi.log_prob(valid_episodes.actions))
+                    - old_pi.log_prob(valid_episodes.actions))
                 if log_ratio.dim() > 2:
                     log_ratio = torch.sum(log_ratio, dim=2)
                 ratio = torch.exp(log_ratio)
@@ -170,8 +187,11 @@ class MetaLearner(object):
         """Meta-optimization step (ie. update of the initial parameters), based 
         on Trust Region Policy Optimization (TRPO, [4]).
         """
-        old_loss, _, old_pis = self.surrogate_loss(episodes)
-        grads = torch.autograd.grad(old_loss, self.policy.parameters())
+        old_loss, _, old_pis = self.surrogate_loss(episodes, exp_update='dice')
+        # pdb.set_trace()
+        params = [param for param in self.policy.parameters()] + [param for param in self.exp_policy.parameters()]
+        full_grads = torch.autograd.grad(old_loss, params)
+        grads = full_grads[:7]
         grads = parameters_to_vector(grads)
 
         # Compute the step direction with Conjugate Gradient
@@ -192,17 +212,35 @@ class MetaLearner(object):
         # Line search
         step_size = 1.0
         for _ in range(ls_max_steps):
-            vector_to_parameters(old_params - step_size * step,
+            vector_to_parameters(old_params - step_size * step,        #### TODO: Convert this to ProMP optimizer for convenience and better convergence.
                                  self.policy.parameters())
-            loss, kl, _ = self.surrogate_loss(episodes, old_pis=old_pis)
+            loss, kl, _ = self.surrogate_loss(episodes, old_pis=old_pis, exp_update='None')
             improve = loss - old_loss
             if (improve.item() < 0.0) and (kl.item() < max_kl):
                 break
             step_size *= ls_backtrack_ratio
         else:
             vector_to_parameters(old_params, self.policy.parameters())
+        # pdb.set_trace()
+        self.update_exp_policy_dice(old_loss, full_grads[7:])        #### TODO : This should maybe go before the line search to make that update more stable
+                                                ####        by adding accounting for the exp_policy update in the inner_update step
+
+    def update_exp_policy_dice(self,old_loss, grads):
+        self.exp_optimizer.zero_grad()
+        for param, gradient in zip(self.exp_policy.parameters(),grads):
+            param.grad = gradient
+        # pdb.set_trace()
+        self.exp_optimizer.step()
+        
+
+    # def update_exp_policy_ga(episodes):
+        
+
+    #     pass
 
     def to(self, device, **kwargs):
         self.policy.to(device, **kwargs)
         self.baseline.to(device, **kwargs)
+        self.exp_policy.to(device, **kwargs)
+        self.exp_baseline.to(device, **kwargs)
         self.device = device
