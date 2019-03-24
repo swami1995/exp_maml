@@ -29,8 +29,8 @@ def plotting(episodes, batch, save_folder,n):
         train_obs = train_ep.observations[:,0].cpu().numpy()
         val_obs = val_ep.observations[:,0].cpu().numpy()
         corners = np.array([np.array([-2,-2]), np.array([2,-2]), np.array([-2,2]), np.array([2, 2])])
-        plt.plot(train_obs[:,0], train_obs[:,1], 'b')
-        plt.plot(val_obs[:,0], val_obs[:,1], 'k')
+        plt.plot(train_obs[:,0], train_obs[:,1], 'b', label='exploring agent')
+        plt.plot(val_obs[:,0], val_obs[:,1], 'k', label='trained agent')
         plt.scatter(corners[:,0], corners[:,1], s=10, color='g')
         plt.scatter(task[None,0], task[None,1], s=10, color='r')
         plt.savefig(os.path.join(save_folder,'plot-{0}-{1}.png'.format(batch,i)))
@@ -58,7 +58,9 @@ def main(args):
         config = {k: v for (k, v) in vars(args).items() if k != 'device'}
         config.update(device=args.device.type)
         json.dump(config, f, indent=2)
-
+    os.system("mkdir "+save_folder+'/code')
+    os.system("cp -r *.py "+save_folder+'/code/')
+    os.system("cp -r maml_rl "+save_folder+'/code/')
 
     sampler = BatchSampler(args.env_name, batch_size=args.fast_batch_size,
         num_workers=args.num_workers)

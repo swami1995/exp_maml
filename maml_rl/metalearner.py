@@ -42,6 +42,7 @@ class MetaLearner(object):
         self.lr = 7e-4
         self.eps = 1e-5
         self.exp_optimizer = optim.Adam(self.exp_policy.parameters(), lr=self.lr, eps=self.eps)
+        self.check=False
 
     def inner_loss(self, episodes, exp_update='dice', params=None):
         """Compute the inner loss for the one-step gradient update. The inner 
@@ -65,6 +66,12 @@ class MetaLearner(object):
             exp_log_probs_diff = exp_pi.log_prob(episodes.actions)
             dice_wts = torch.exp(exp_log_probs_diff - exp_log_probs_non_diff)  #### TODO: This might be high variance so reconsider it later maybe.
             log_probs *= dice_wts
+        if self.check:
+            self.check=False
+            print(log_probs.sum(-1).max())
+            print(log_probs.sum(-1).min())
+            print(log_probs.sum(-1).abs().mean())            
+            # pdb.set_trace()
         if log_probs.dim() > 2:
             log_probs = torch.sum(log_probs, dim=2)
             exp_log_probs_diff = torch.sum(exp_log_probs_diff, dim=2)
@@ -72,7 +79,6 @@ class MetaLearner(object):
         wts = episodes.mask * torch.exp(log_probs.detach()-exp_log_probs_non_diff)     #### TODO: Needs more thorough investigation : May require better importance wts or find better alternatives
         loss = -weighted_mean(log_probs * advantages, dim=0,
             weights=wts)
-
         return loss
 
     def adapt(self, episodes, first_order=False, exp_update='dice'):
@@ -187,6 +193,7 @@ class MetaLearner(object):
         """Meta-optimization step (ie. update of the initial parameters), based 
         on Trust Region Policy Optimization (TRPO, [4]).
         """
+        self.check = True
         old_loss, _, old_pis = self.surrogate_loss(episodes, exp_update='dice')
         # pdb.set_trace()
         params = [param for param in self.policy.parameters()] + [param for param in self.exp_policy.parameters()]
@@ -222,8 +229,8 @@ class MetaLearner(object):
         else:
             vector_to_parameters(old_params, self.policy.parameters())
         # pdb.set_trace()
-        self.update_exp_policy_dice(old_loss, full_grads[7:])        #### TODO : This should maybe go before the line search to make that update more stable
-                                                ####        by adding accounting for the exp_policy update in the inner_update step
+        # self.update_exp_policy_dice(old_loss, full_grads[7:])        #### TODO : This should maybe go before the line search to make that update more stable
+        #                                                              ####        by adding accounting for the exp_policy update in the inner_update step
 
     def update_exp_policy_dice(self,old_loss, grads):
         self.exp_optimizer.zero_grad()
