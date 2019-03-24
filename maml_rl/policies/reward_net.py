@@ -1,22 +1,22 @@
-import math
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
-from torch.distributions import Normal
 
 from collections import OrderedDict
-from maml_rl.policies.policy import Policy, weight_init
 
-class NormalMLPPolicy(Policy):
-    """Policy network based on a multi-layer perceptron (MLP), with a 
-    `Normal` distribution output, with trainable standard deviation. This 
-    policy network can be used on tasks with continuous action spaces (eg. 
-    `HalfCheetahDir`). The code is adapted from 
-    https://github.com/cbfinn/maml_rl/blob/9c8e2ebd741cb0c7b8bf2d040c4caeeb8e06cc95/sandbox/rocky/tf/policies/maml_minimal_gauss_mlp_policy.py
-    """
-    def __init__(self, input_size, output_size, embedding_size, hidden_sizes_pre_embedding=(),
+def weight_init(module):
+    if isinstance(module, nn.Linear):
+        nn.init.xavier_uniform_(module.weight)
+        module.bias.data.zero_()
+
+class RewardNetMLP(nn.Module):
+    def __init__(self, state_size, action_size, embedding_size, output_size=1, hidden_sizes_pre_embedding=(),
                  hidden_sizes_post_embedding=(), nonlinearity=F.relu, init_std=1.0, min_std=1e-6):
-        super(NormalMLPPolicy, self).__init__(input_size=input_size, output_size=output_size, embedding_size=embedding_size)
+        super(RewardNetMLP, self).__init__()
+        self.state_size = state_size
+        self.action_size = action_size
+        self.input_size = state_size+action_size                        ### NOTE: Needs to be changed for different kinds of inputs
+        self.embedding_size = embedding_size
+        self.output_size = output_size
 
         self.hidden_sizes_pre_embedding = hidden_sizes_pre_embedding
         self.nonlinearity = nonlinearity
@@ -31,14 +31,28 @@ class NormalMLPPolicy(Policy):
         for i in range(1, self.num_layers):
             self.add_module('layer{0}'.format(i+self.num_layers-1),
                 nn.Linear(layer_sizes[i - 1], layer_sizes[i]))
-        self.mu = nn.Linear(layer_sizes[-1], output_size)
-
-        self.sigma = nn.Parameter(torch.Tensor(output_size))
-        self.sigma.data.fill_(math.log(init_std))
+        self.reward_layer = nn.Linear(layer_sizes[-1], output_size)
 
         self.apply(weight_init)
 
-    def forward(self, input, z, params=None):
+
+    def update_params(self, loss, step_size=0.5, first_order=False):
+        """Apply one step of gradient descent on the loss function `loss`, with 
+        step-size `step_size`, and returns the updated parameters of the neural 
+        network.
+        """
+        grads = torch.autograd.grad(loss, self.parameters(),
+            create_graph=not first_order)
+        updated_params = OrderedDict()
+        curr_params = self.named_parameters()
+        for (name, param), grad in zip(self.named_parameters(), grads):
+            updated_params[name] = param - step_size * grad
+
+        return curr_params, updated_params
+
+
+    def forward(self, state, action, z, params=None):
+        input = torch.cat([state,action],dim=-1)
         if params is None:
             params = OrderedDict(self.named_parameters())
         output = input
@@ -55,8 +69,7 @@ class NormalMLPPolicy(Policy):
                 bias=params['layer_post{0}.bias'.format(i+self.num_layers-1)])
             output = self.nonlinearity(output)  
 
-        mu = F.linear(output, weight=params['mu.weight'],
-            bias=params['mu.bias'])
-        scale = torch.exp(torch.clamp(params['sigma'], min=self.min_log_std))
+        reward = F.relu(F.linear(output, weight=params['reward_layer.weight'],
+            bias=params['reward_layer.bias']))
 
-        return Normal(loc=mu, scale=scale)
+        return reward

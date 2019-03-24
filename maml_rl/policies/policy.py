@@ -9,10 +9,11 @@ def weight_init(module):
         module.bias.data.zero_()
 
 class Policy(nn.Module):
-    def __init__(self, input_size, output_size):
+    def __init__(self, input_size, output_size, embedding_size):
         super(Policy, self).__init__()
         self.input_size = input_size
         self.output_size = output_size
+        self.embedding_size = embedding_size
 
     def update_params(self, loss, step_size=0.5, first_order=False):
         """Apply one step of gradient descent on the loss function `loss`, with 
