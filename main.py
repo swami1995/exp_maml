@@ -9,7 +9,7 @@ import sys
 import matplotlib.pyplot as plt
 
 from maml_rl.metalearner import MetaLearner
-from maml_rl.policies import CategoricalMLPPolicy, NormalMLPPolicy
+from maml_rl.policies import CategoricalMLPPolicy, NormalMLPPolicy, RewardNetMLP
 from maml_rl.baseline import LinearFeatureBaseline
 from maml_rl.sampler import BatchSampler
 from maml_rl.envs.point_envs.point_env_2d_corner import MetaPointEnvCorner
@@ -68,20 +68,34 @@ def main(args):
         policy = NormalMLPPolicy(
             int(np.prod(sampler.envs.observation_space.shape)),
             int(np.prod(sampler.envs.action_space.shape)),
-            hidden_sizes=(args.hidden_size,) * args.num_layers)
+            args.embed_size,
+            hidden_sizes_pre_embedding=(args.hidden_size,) * args.num_layers_pre,
+            hidden_sizes_post_embedding=(args.hidden_size,) * args.num_layers_post)
         exp_policy = NormalMLPPolicy(
             int(np.prod(sampler.envs.observation_space.shape)),
             int(np.prod(sampler.envs.action_space.shape)),
-            hidden_sizes=(args.hidden_size,) * args.num_layers)
+            args.embed_size,
+            hidden_sizes_pre_embedding=(args.hidden_size,) * args.num_layers_pre,
+            hidden_sizes_post_embedding=(args.hidden_size,) * args.num_layers_post)
     else:
         policy = CategoricalMLPPolicy(
             int(np.prod(sampler.envs.observation_space.shape)),
             sampler.envs.action_space.n,
-            hidden_sizes=(args.hidden_size,) * args.num_layers)
+            args.embed_size,
+            hidden_sizes_pre_embedding=(args.hidden_size,) * args.num_layers_pre,
+            hidden_sizes_post_embedding=(args.hidden_size,) * args.num_layers_post)
         exp_policy = CategoricalMLPPolicy(
             int(np.prod(sampler.envs.observation_space.shape)),
             sampler.envs.action_space.n,
-            hidden_sizes=(args.hidden_size,) * args.num_layers)
+            args.embed_size,
+            hidden_sizes_pre_embedding=(args.hidden_size,) * args.num_layers_pre,
+            hidden_sizes_post_embedding=(args.hidden_size,) * args.num_layers_post)
+    reward_net = RewardNetMLP(
+            int(np.prod(sampler.envs.observation_space.shape)),
+            sampler.envs.action_space.shape[0],
+            args.embed_size,
+            hidden_sizes_pre_embedding=(args.hidden_size,) * args.num_layers_pre,
+            hidden_sizes_post_embedding=(args.hidden_size,) * args.num_layers_post)
 
     baseline = LinearFeatureBaseline(
         int(np.prod(sampler.envs.observation_space.shape)))
@@ -93,8 +107,8 @@ def main(args):
         policy.load_state_dict(torch.load(args.load_dir+'.pt'))
         exp_policy.load_state_dict(torch.load(args.load_dir+'-exp.pt'))
 
-    metalearner = MetaLearner(sampler, policy, exp_policy, baseline, exp_baseline, gamma=args.gamma,
-        fast_lr=args.fast_lr, tau=args.tau, device=args.device)
+    metalearner = MetaLearner(sampler, policy, exp_policy, baseline, exp_baseline, reward_net, embed_size=args.embed_size, gamma=args.gamma,
+        fast_lr=args.fast_lr, tau=args.tau, lr=args.exp_lr, eps=args.exp_eps, device=args.device)
 
     for batch in range(args.num_batches):
         tasks = sampler.sample_tasks(num_tasks=args.meta_batch_size)
@@ -148,14 +162,22 @@ if __name__ == '__main__':
     # Policy network (relu activation function)
     parser.add_argument('--hidden-size', type=int, default=100,
         help='number of hidden units per layer')
-    parser.add_argument('--num-layers', type=int, default=2,
-        help='number of hidden layers')
+    parser.add_argument('--embed-size', type=int, default=100,
+        help='number of hidden units per layer')
+    parser.add_argument('--num-layers-pre', type=int, default=2,
+        help='number of hidden layers-pre')
+    parser.add_argument('--num-layers-post', type=int, default=1,
+        help='number of hidden layers-post')
 
     # Task-specific
     parser.add_argument('--fast-batch-size', type=int, default=20,
         help='batch size for each individual task')
     parser.add_argument('--fast-lr', type=float, default=0.5,
         help='learning rate for the 1-step gradient update of MAML')
+    parser.add_argument('--exp-lr', type=float, default=7e-4,
+        help='learning rate for exploration network')
+    parser.add_argument('--exp-eps', type=float, default=1e-5,
+        help='epsilon for exploration network optimizer')
 
     # Optimization
     parser.add_argument('--num-batches', type=int, default=200,
