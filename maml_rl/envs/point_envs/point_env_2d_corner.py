@@ -18,8 +18,8 @@ class MetaPointEnvCorner(gym.Env):
         print("Point Env reward type is", reward_type)
         self.sparse_reward_radius = sparse_reward_radius
         self.corners = [np.array([-2,-2]), np.array([2,-2]), np.array([-2,2]), np.array([2, 2])]
-        self.observation_space = Box(low=-np.inf, high=np.inf, shape=(2,))
-        self.action_space = Box(low=-0.2, high=0.2, shape=(2,))
+        self.observation_space = Box(low=-np.inf, high=np.inf, shape=(2,), dtype=np.float32)
+        self.action_space = Box(low=-0.2, high=0.2, shape=(2,), dtype=np.float32)
         self.seed()
         self._goal = task
 

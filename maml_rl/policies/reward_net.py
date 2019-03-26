@@ -76,7 +76,7 @@ class RewardNetMLP(nn.Module):
                 bias=params['layer_post{0}.bias'.format(i+self.num_layers_pre-1)])
             output = self.nonlinearity(output)  
 
-        reward = F.relu(F.linear(output, weight=params['reward_layer.weight'],
-            bias=params['reward_layer.bias']))
+        reward = F.linear(output, weight=params['reward_layer.weight'],
+            bias=params['reward_layer.bias'])
 
         return reward

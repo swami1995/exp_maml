@@ -45,13 +45,14 @@ def main(args):
 
     save_folder = './saves/{0}'.format(args.env_name+'/'+args.output_folder)
     if args.output_folder!='maml-trial' and args.output_folder!='trial':
-        i=0
-        while os.path.exists(save_folder):
-            args.output_folder=str(i+1)
-            i+=1
-            save_folder = './saves/{0}'.format(args.env_name+'/'+args.output_folder)
-            log_directory = './logs/{0}'.format(args.env_name+'/'+args.output_folder)
-        os.makedirs(save_folder)
+        # i=0
+        # while os.path.exists(save_folder):
+        #     args.output_folder=str(i+1)
+        #     i+=1
+        #     save_folder = './saves/{0}'.format(args.env_name+'/'+args.output_folder)
+        log_directory = './logs/{0}'.format(args.env_name+'/'+args.output_folder)
+        if not os.path.exists(save_folder):
+            os.makedirs(save_folder)
     writer = SummaryWriter('./logs/{0}'.format(args.env_name+'/'+args.output_folder))
 
     with open(os.path.join(save_folder, 'config.json'), 'w') as f:
@@ -61,6 +62,7 @@ def main(args):
     os.system("mkdir "+save_folder+'/code')
     os.system("cp -r *.py "+save_folder+'/code/')
     os.system("cp -r maml_rl "+save_folder+'/code/')
+    print("Models saved in :", save_folder)
 
     sampler = BatchSampler(args.env_name, batch_size=args.fast_batch_size,
         num_workers=args.num_workers)
@@ -104,24 +106,30 @@ def main(args):
         int(np.prod(sampler.envs.observation_space.shape)))
 
     if args.load_dir is not None:
-        policy.load_state_dict(torch.load(args.load_dir+'.pt'))
-        exp_policy.load_state_dict(torch.load(args.load_dir+'-exp.pt'))
+        folder_idx = args.load_dir.split('.')
+        load_folder = './saves/{0}'.format(args.env_name+'/'+folder_idx[0])
+        policy.load_state_dict(torch.load(load_folder+'policy-{0}.pt'.format(folder_idx[1])))
+        exp_policy.load_state_dict(torch.load(load_folder+'policy-{0}-exp.pt'.format(folder_idx[1])))
+        reward_net.load_state_dict(torch.load(load_folder+'reward-{0}.pt'.format(folder_idx[1])))
 
     metalearner = MetaLearner(sampler, policy, exp_policy, baseline, exp_baseline, reward_net, embed_size=args.embed_size, gamma=args.gamma,
         fast_lr=args.fast_lr, tau=args.tau, lr=args.exp_lr, eps=args.exp_eps, device=args.device)
 
+    best_reward_after=-400
     for batch in range(args.num_batches):
         tasks = sampler.sample_tasks(num_tasks=args.meta_batch_size)
+        # if batch==0:
         episodes = metalearner.sample(tasks, first_order=args.first_order)
-        metalearner.step(episodes, max_kl=args.max_kl, cg_iters=args.cg_iters,
+        r_loss, pg_loss = metalearner.step(episodes, max_kl=args.max_kl, cg_iters=args.cg_iters,
             cg_damping=args.cg_damping, ls_max_steps=args.ls_max_steps,
             ls_backtrack_ratio=args.ls_backtrack_ratio)
 
+        reward_after = total_rewards([ep.rewards for _, ep in episodes])
         print('total_rewards/before_update', total_rewards([ep.rewards for ep, _ in episodes]), batch)
         print('total_rewards/after_update', total_rewards([ep.rewards for _, ep in episodes]), batch)
-        
-        # Plotting figure
-        plotting(episodes, batch, save_folder,args.num_plots)
+        print('reward_loss/before_update', r_loss[0], batch)
+        print('reward_loss/after_update', r_loss[1], batch)
+        print('pg_loss/after_update', pg_loss, batch)
 
         if args.load_dir is not None:
             sys.exit(0)
@@ -131,14 +139,24 @@ def main(args):
             total_rewards([ep.rewards for ep, _ in episodes]), batch)
         writer.add_scalar('total_rewards/after_update',
             total_rewards([ep.rewards for _, ep in episodes]), batch)
+        writer.add_scalar('reward_loss/before_update', r_loss[0], batch)
+        writer.add_scalar('reward_loss/after_update', r_loss[1], batch)
+        writer.add_scalar('pg_loss/after_update', pg_loss, batch)
 
-        # Save policy network
-        with open(os.path.join(save_folder,
-                'policy-{0}.pt'.format(batch)), 'wb') as f:
-            torch.save(policy.state_dict(), f)
-        with open(os.path.join(save_folder,
-                'policy-{0}-exp.pt'.format(batch)), 'wb') as f:
-            torch.save(exp_policy.state_dict(), f)
+        ## Save policy network
+        if batch%20==0 or reward_after > best_reward_after:
+            with open(os.path.join(save_folder,
+                    'policy-{0}.pt'.format(batch)), 'wb') as f:
+                torch.save(policy.state_dict(), f)
+            with open(os.path.join(save_folder,
+                    'policy-{0}-exp.pt'.format(batch)), 'wb') as f:
+                torch.save(exp_policy.state_dict(), f)
+            with open(os.path.join(save_folder,
+                    'reward-{0}.pt'.format(batch)), 'wb') as f:
+                torch.save(reward_net.state_dict(), f)
+            best_reward_after = reward_after
+            # Plotting figure
+            plotting(episodes, batch, save_folder,args.num_plots)
 
 
 if __name__ == '__main__':
@@ -170,7 +188,7 @@ if __name__ == '__main__':
         help='number of hidden layers-post')
 
     # Task-specific
-    parser.add_argument('--fast-batch-size', type=int, default=20,
+    parser.add_argument('--fast-batch-size', type=int, default=1,
         help='batch size for each individual task')
     parser.add_argument('--fast-lr', type=float, default=0.5,
         help='learning rate for the 1-step gradient update of MAML')
