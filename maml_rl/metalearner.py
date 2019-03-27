@@ -11,6 +11,7 @@ from maml_rl.utils.optimization import conjugate_gradient
 import torch.optim as optim
 
 from collections import OrderedDict
+import math
 
 class MetaLearner(object):
     """Meta-learner
@@ -44,11 +45,11 @@ class MetaLearner(object):
         self.tau = tau
         self.lr_r = lr
         self.eps_r = eps
-        self.lr_z = lr * 0.1
+        self.lr_z = lr*0.1
         self.eps_z = eps
         self.lr_p = lr
         self.eps_p = eps
-        self.lr_e = lr
+        self.lr_e = lr*0.10
         self.eps_e = eps
         self.embed_size = embed_size
         # pdb.set_trace()
@@ -61,6 +62,7 @@ class MetaLearner(object):
         self.policy_optimizer = optim.Adam(self.policy.parameters(), lr=self.lr_p, eps=self.eps_p)
         self.exp_optimizer = optim.Adam(self.exp_policy.parameters(), lr=self.lr_e, eps=self.eps_e)
         self.check=False       
+        self.iter = 0
 
 
     def inner_loss(self, episodes, exp_update='dice', params=None):
@@ -233,7 +235,7 @@ class MetaLearner(object):
             with torch.set_grad_enabled(old_pi is None):
 
                 #### Policy Objective
-                pi = self.policy(valid_episodes.observations,updated_params['z'].detach())
+                pi = self.policy(valid_episodes.observations,updated_params['z'])#.detach())
                 pis.append(detach_distribution(pi))
 
                 if old_pi is None:
@@ -315,8 +317,15 @@ class MetaLearner(object):
         self.reward_optimizer.zero_grad()
         self.policy_optimizer.zero_grad()
         self.exp_optimizer.zero_grad()
-        ipdb.set_trace()
-        (old_loss+reward_loss).backward()
+        self.iter+=1
+        # if self.iter%5==4:
+            # ipdb.set_trace()
+        wts = math.exp(-self.iter/5)
+        (old_loss+wts*reward_loss).backward()
+        print("z_grad", self.z_old.grad.abs().mean())
+        print("policy_grad", self.policy.layer_pre1.weight.grad.abs().mean())
+        print("exp_policy_grad", self.exp_policy.layer_pre1.weight.grad.abs().mean())
+        print("reward_grad", self.reward_net.layer_pre1.weight.grad.abs().mean())
         self.z_optimizer.step()
         self.reward_optimizer.step()
         self.policy_optimizer.step()
