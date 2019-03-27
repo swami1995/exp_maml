@@ -13,8 +13,9 @@ class BatchEpisodes(object):
         self._actions_list = [[] for _ in range(batch_size)]
         self._action_probs_list = [[] for _ in range(batch_size)]
         self._rewards_list = [[] for _ in range(batch_size)]
+        self._values_list = [[] for _ in range(batch_size)]
         self._mask_list = []
-
+        self._values = None
         self._observations = None
         self._actions = None
         self._action_probs = None
@@ -69,6 +70,15 @@ class BatchEpisodes(object):
             self._rewards = torch.from_numpy(rewards).to(self.device)
         return self._rewards
 
+    def values(self):
+        if self._values is None:
+            values = np.zeros((len(self), self.batch_size), dtype=np.float32)
+            for i in range(self.batch_size):
+                length = len(self._values_list[i])
+                values[:length, i] = np.stack(self._values_list[i], axis=0)
+            self._values = torch.from_numpy(values).to(self.device)
+        return self._values
+
     @property
     def returns(self):
         if self._returns is None:
@@ -109,17 +119,18 @@ class BatchEpisodes(object):
         for i in range(len(self) - 1, -1, -1):
             gae = gae * self.gamma * tau + deltas[i]
             advantages[i] = gae
+        returns = values[:-1] + advantages
+        return advantages, returns
 
-        return advantages
-
-    def append(self, observations, actions, rewards, batch_ids, action_probs):
-        for observation, action, reward, batch_id, action_prob in zip(
-                observations, actions, rewards, batch_ids, action_probs):
+    def append(self, observations, actions, rewards, batch_ids, action_probs, values):
+        for observation, action, reward, batch_id, action_prob, value in zip(
+                observations, actions, rewards, batch_ids, action_probs, values):
             if batch_id is None:
                 continue
             self._observations_list[batch_id].append(observation.astype(np.float32))
             self._actions_list[batch_id].append(action.astype(np.float32))
             self._rewards_list[batch_id].append(reward.astype(np.float32))
             self._action_probs_list[batch_id].append(action_prob.astype(np.float32))
+            self._values_list[batch_id].append(value.astype(np.float32))
     def __len__(self):
         return max(map(len, self._rewards_list))

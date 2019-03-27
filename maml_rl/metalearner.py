@@ -52,6 +52,9 @@ class MetaLearner(object):
         self.lr_e = lr*0.10
         self.eps_e = eps
         self.embed_size = embed_size
+        self.value_coeff = 0.5
+        self.entropy_coeff = 0
+        self.clamp_param = 0.2
         # pdb.set_trace()
         self.z_old = nn.Parameter(torch.zeros((1,embed_size)))
         nn.init.xavier_uniform_(self.z_old)
@@ -74,7 +77,7 @@ class MetaLearner(object):
         states, actions, rewards = episodes.observations, episodes.actions, episodes.rewards
         rewards_pred = self.reward_net(states,actions,self.z).squeeze()
         loss = (rewards - rewards_pred)**2
-        exp_pi = self.exp_policy(states, self.z.detach())
+        exp_pi, exp_value = self.exp_policy(states, self.z.detach())
         exp_log_probs_non_diff = episodes.action_probs
         exp_log_probs_diff = torch.zeros_like(exp_log_probs_non_diff)
                                                         #### TODO: Think of better objectives (predicting the reward function, hypothesis testing etc. which are denser)
@@ -154,7 +157,7 @@ class MetaLearner(object):
 
         for (train_episodes, valid_episodes), old_pi in zip(episodes, old_pis):
             curr_params, updated_params, _ = self.adapt(train_episodes)
-            pi = self.policy(valid_episodes.observations, updated_params)
+            pi, value = self.policy(valid_episodes.observations, updated_params)
 
             if old_pi is None:
                 old_pi = detach_distribution(pi)
@@ -192,7 +195,7 @@ class MetaLearner(object):
             self.baseline.fit(valid_episodes)
             # old_pi = curr_params
             with torch.set_grad_enabled(old_pi is None):
-                pi = self.policy(valid_episodes.observations,updated_params['z'])#, params=updated_params)
+                pi, value = self.policy(valid_episodes.observations,updated_params['z'])#, params=updated_params)
                 pis.append(detach_distribution(pi))
 
                 if old_pi is None:
@@ -230,20 +233,17 @@ class MetaLearner(object):
 
         for (train_episodes, valid_episodes), old_pi in zip(episodes, old_pis):
             curr_params, updated_params, reward_loss_before = self.adapt(train_episodes)
-            self.baseline.fit(valid_episodes)
-            # old_pi = curr_params
             with torch.set_grad_enabled(old_pi is None):
 
                 #### Policy Objective
-                pi = self.policy(valid_episodes.observations,updated_params['z'])#.detach())
+                pi, values = self.policy(valid_episodes.observations,updated_params['z'])#.detach())
                 pis.append(detach_distribution(pi))
+                dist_loss = pi.entropy().mean()
 
                 if old_pi is None:
                     old_pi = detach_distribution(pi)
 
-                
-                values = self.baseline(valid_episodes)
-                advantages = valid_episodes.gae(values, tau=self.tau)
+                advantages, returns = valid_episodes.gae(values.detach(),tau=self.tau)
                 advantages = weighted_normalize(advantages,
                     weights=valid_episodes.mask)
 
@@ -252,10 +252,17 @@ class MetaLearner(object):
                 if log_ratio.dim() > 2:
                     log_ratio = torch.sum(log_ratio, dim=2)
                 ratio = torch.exp(log_ratio)
-
-                loss = -weighted_mean(ratio * advantages, dim=0,
+                surr1 = ratio * advantages
+                surr2 = torch.clamp(ratio, 1 - self.clamp_param, 1 + self.clamp_param)*advantages
+                action_loss = -torch.min(surr1, surr2)
+                actions_loss = weighted_mean(action_loss, dim=0,
                     weights=valid_episodes.mask)
+                # ipdb.set_trace()
+                value_loss = 0.5 * (returns - values.squeeze(2)).pow(2).mean()
+                loss = action_loss + self.value_coeff*value_loss + self.entropy_coeff*dist_loss
                 losses.append(loss)
+
+                
 
                 mask = valid_episodes.mask
                 if valid_episodes.actions.dim() > 2:
@@ -308,7 +315,7 @@ class MetaLearner(object):
         # pdb.set_trace()
         # self.conjugate_gradient_update(episodes, max_kl, cg_iters, cg_damping,            #### TODO: Depcretaed, won't work. Fix the TODO below first.
         #                                         ls_max_steps, ls_backtrack_ratio)
-        self.gradient_descent_update(old_loss*10,reward_loss_after*1)
+        self.gradient_descent_update(old_loss*10,0)#,reward_loss_after*1)
         # ipdb.set_trace()
         return ((reward_loss_before, reward_loss_after)), old_loss
 

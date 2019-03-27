@@ -33,12 +33,13 @@ class BatchSampler(object):
             with torch.no_grad():
                 observations_tensor = torch.from_numpy(observations).type(torch.FloatTensor).to(device=device)
                 # pdb.set_trace()
-                action_probs_tensor = policy(observations_tensor, params['z'])
+                action_probs_tensor, values = policy(observations_tensor, params['z'])
                 actions_tensor = action_probs_tensor.sample()
                 actions = actions_tensor.cpu().numpy()
                 action_probs = action_probs_tensor.log_prob(actions_tensor).detach().cpu().numpy()   ### not sure need to chec indexing
+                values = values.cpu().numpy()
             new_observations, rewards, dones, new_batch_ids, _ = self.envs.step(actions)
-            episodes.append(observations, actions, rewards, batch_ids, action_probs)
+            episodes.append(observations, actions, rewards, batch_ids, action_probs, values)
             observations, batch_ids = new_observations, new_batch_ids
         return episodes
 

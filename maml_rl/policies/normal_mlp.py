@@ -40,6 +40,8 @@ class NormalMLPPolicy(Policy):
         self.sigma = nn.Parameter(torch.Tensor(output_size))
         self.sigma.data.fill_(math.log(init_std))
 
+        self.Value_fn = nn.Linear(layer_sizes[-1], 1)
+
         self.apply(weight_init)
 
     def forward(self, input, z, params=None):
@@ -65,5 +67,6 @@ class NormalMLPPolicy(Policy):
         mu = F.linear(output, weight=params['mu.weight'],
             bias=params['mu.bias'])
         scale = torch.exp(torch.clamp(params['sigma'], min=self.min_log_std))
+        value = self.Value_fn(output)
 
-        return Normal(loc=mu, scale=scale)
+        return Normal(loc=mu, scale=scale), value
