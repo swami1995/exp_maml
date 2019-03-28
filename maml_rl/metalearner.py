@@ -88,10 +88,12 @@ class MetaLearner(object):
                                                         ####       also the importance weights would have very high variance. 
                                                         ####       Hence need clipping etc. at least as in PPO etc. 
         if exp_update=='dice':
+            # ipdb.set_trace()
             exp_log_probs_diff = exp_pi.log_prob(episodes.actions)
             self.dice_wts.append(torch.exp(exp_log_probs_diff.sum(dim=2) - exp_log_probs_non_diff.sum(dim=2)))  #### TODO: This might be high variance so reconsider it later maybe.
+            cum_wts = torch.exp(torch.log(self.dice_wts[-1]).cumsum(dim=0))
             # self.dice_wts_copy = tor
-            loss *= self.dice_wts[-1]
+            loss *= cum_wts
 
         if self.check:
             self.check=False
