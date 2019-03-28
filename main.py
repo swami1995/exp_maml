@@ -120,7 +120,7 @@ def main(args):
         tasks = sampler.sample_tasks(num_tasks=args.meta_batch_size)
         # if batch==0:
         episodes = metalearner.sample(tasks, first_order=args.first_order)
-        r_loss, pg_loss = metalearner.step(episodes, max_kl=args.max_kl, cg_iters=args.cg_iters,
+        r_loss, pg_loss, grad_vals = metalearner.step(episodes, max_kl=args.max_kl, cg_iters=args.cg_iters,
             cg_damping=args.cg_damping, ls_max_steps=args.ls_max_steps,
             ls_backtrack_ratio=args.ls_backtrack_ratio)
 
@@ -142,6 +142,10 @@ def main(args):
         writer.add_scalar('reward_loss/before_update', r_loss[0], batch)
         writer.add_scalar('reward_loss/after_update', r_loss[1], batch)
         writer.add_scalar('pg_loss/after_update', pg_loss, batch)
+        writer.add_scalar('grad_vals/z', grad_vals[0], batch)  
+        writer.add_scalar('grad_vals/policy', grad_vals[1], batch)  
+        writer.add_scalar('grad_vals/exp_policy', grad_vals[2], batch)  
+        writer.add_scalar('grad_vals/reward_net', grad_vals[3], batch)  
 
         ## Save policy network
         if batch%20==0 or reward_after > best_reward_after:

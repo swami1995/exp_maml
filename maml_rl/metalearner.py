@@ -261,7 +261,6 @@ class MetaLearner(object):
                 value_loss = 0.5 * (returns - values.squeeze(2)).pow(2).mean()
                 loss = action_loss + self.value_coeff*value_loss + self.entropy_coeff*dist_loss
                 losses.append(loss)
-
                 
 
                 mask = valid_episodes.mask
@@ -315,9 +314,9 @@ class MetaLearner(object):
         # pdb.set_trace()
         # self.conjugate_gradient_update(episodes, max_kl, cg_iters, cg_damping,            #### TODO: Depcretaed, won't work. Fix the TODO below first.
         #                                         ls_max_steps, ls_backtrack_ratio)
-        self.gradient_descent_update(old_loss*10,0)#,reward_loss_after*1)
+        grad_vals = self.gradient_descent_update(old_loss*10,reward_loss_after*1)
         # ipdb.set_trace()
-        return ((reward_loss_before, reward_loss_after)), old_loss
+        return ((reward_loss_before, reward_loss_after)), old_loss, grad_vals
 
     def gradient_descent_update(self, old_loss, reward_loss):
         self.z_optimizer.zero_grad()
@@ -328,7 +327,13 @@ class MetaLearner(object):
         # if self.iter%5==4:
             # ipdb.set_trace()
         wts = math.exp(-self.iter/5)
-        (old_loss+wts*reward_loss).backward()
+        (old_loss).backward(retain_graph=True)
+        self.exp_optimizer.step()
+        (wts*reward_loss).backward()
+        grad_vals = [ self.z_old.grad.abs().mean().item()
+                    , self.policy.layer_pre1.weight.grad.abs().mean().item()
+                    , self.exp_policy.layer_pre1.weight.grad.abs().mean().item()
+                    ,self.reward_net.layer_pre1.weight.grad.abs().mean().item()]
         print("z_grad", self.z_old.grad.abs().mean())
         print("policy_grad", self.policy.layer_pre1.weight.grad.abs().mean())
         print("exp_policy_grad", self.exp_policy.layer_pre1.weight.grad.abs().mean())
@@ -336,8 +341,8 @@ class MetaLearner(object):
         self.z_optimizer.step()
         self.reward_optimizer.step()
         self.policy_optimizer.step()
-        self.exp_optimizer.step()
-
+        # self.exp_optimizer.step()
+        return grad_vals
 
     def conjugate_gradient_update(self, grads, episodes, max_kl, cg_iters, 
                                   cg_damping, ls_max_steps, ls_backtrack_ratio):

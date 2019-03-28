@@ -78,7 +78,7 @@ class MetaPointEnvCorner(gym.Env):
                 if dist_from_start < self.sparse_reward_radius:
                     return 0
                 dists = [np.linalg.norm(obs_next - corner[None, :], axis=1) for corner in self.corners]
-                if np.min(goal_distance) == min(dists):
+                if goal_distance == min(dists):
                     return np.linalg.norm(obs - self._goal[None,:], axis=1)[0] - goal_distance
                 return 0
                 # return np.maximum(self.sparse_reward_radius - goal_distance, 0)
