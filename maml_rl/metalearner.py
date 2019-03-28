@@ -66,6 +66,7 @@ class MetaLearner(object):
         self.exp_optimizer = optim.Adam(self.exp_policy.parameters(), lr=self.lr_e, eps=self.eps_e)
         self.check=False       
         self.iter = 0
+        self.dice_wts = []
 
 
     def inner_loss(self, episodes, exp_update='dice', params=None):
@@ -88,8 +89,9 @@ class MetaLearner(object):
                                                         ####       Hence need clipping etc. at least as in PPO etc. 
         if exp_update=='dice':
             exp_log_probs_diff = exp_pi.log_prob(episodes.actions)
-            dice_wts = torch.exp(exp_log_probs_diff.sum(dim=2) - exp_log_probs_non_diff.sum(dim=2))  #### TODO: This might be high variance so reconsider it later maybe.
-            loss *= dice_wts
+            self.dice_wts.append(torch.exp(exp_log_probs_diff.sum(dim=2) - exp_log_probs_non_diff.sum(dim=2)))  #### TODO: This might be high variance so reconsider it later maybe.
+            # self.dice_wts_copy = tor
+            loss *= self.dice_wts[-1]
 
         if self.check:
             self.check=False
@@ -231,6 +233,8 @@ class MetaLearner(object):
         if old_pis is None:
             old_pis = [None] * len(episodes)
 
+        self.dice_wts = []
+
         for (train_episodes, valid_episodes), old_pi in zip(episodes, old_pis):
             curr_params, updated_params, reward_loss_before = self.adapt(train_episodes)
             with torch.set_grad_enabled(old_pi is None):
@@ -314,11 +318,11 @@ class MetaLearner(object):
         # pdb.set_trace()
         # self.conjugate_gradient_update(episodes, max_kl, cg_iters, cg_damping,            #### TODO: Depcretaed, won't work. Fix the TODO below first.
         #                                         ls_max_steps, ls_backtrack_ratio)
-        grad_vals = self.gradient_descent_update(old_loss*10,reward_loss_after*1)
+        grad_vals = self.gradient_descent_update(old_loss*10,reward_loss_after*1, episodes)
         # ipdb.set_trace()
         return ((reward_loss_before, reward_loss_after)), old_loss, grad_vals
 
-    def gradient_descent_update(self, old_loss, reward_loss):
+    def gradient_descent_update(self, old_loss, reward_loss, episodes):
         self.z_optimizer.zero_grad()
         self.reward_optimizer.zero_grad()
         self.policy_optimizer.zero_grad()
@@ -326,10 +330,25 @@ class MetaLearner(object):
         self.iter+=1
         # if self.iter%5==4:
             # ipdb.set_trace()
-        wts = math.exp(-self.iter/5)
-        (old_loss).backward(retain_graph=True)
+        
+        # (old_loss).backward(retain_graph=True)
+
+        dice_grad = torch.autograd.grad(old_loss,self.dice_wts,retain_graph=True)
+        # ipdb.set_trace()
+        dice_grad_baselines = []
+        for i, (train_episode, _) in enumerate(episodes):
+            self.exp_baseline.fit(train_episode, dice_grad[i])
+            dice_grad_baselines.append(self.exp_baseline(train_episode))
+        # ipdb.set_trace()
+        dice_wts_grad = [grad.detach()-base.squeeze(2).detach() for grad,base in zip(dice_grad,dice_grad_baselines)]
+        dice_grad_sum = 0
+        for i in range(len(self.dice_wts)):
+            dice_grad_sum+=dice_wts_grad[i]*self.dice_wts[i]
+        dice_grad_sum.sum().backward(retain_graph=True)
         self.exp_optimizer.step()
-        (wts*reward_loss).backward()
+
+        wts = math.exp(-self.iter/5)
+        (old_loss+wts*reward_loss).backward()
         grad_vals = [ self.z_old.grad.abs().mean().item()
                     , self.policy.layer_pre1.weight.grad.abs().mean().item()
                     , self.exp_policy.layer_pre1.weight.grad.abs().mean().item()
