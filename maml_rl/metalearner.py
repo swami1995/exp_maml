@@ -333,24 +333,24 @@ class MetaLearner(object):
         # if self.iter%5==4:
             # ipdb.set_trace()
         
-        # (old_loss).backward(retain_graph=True)
+        (old_loss).backward(retain_graph=True)
 
-        dice_grad = torch.autograd.grad(old_loss,self.dice_wts,retain_graph=True)
-        # ipdb.set_trace()
-        dice_grad_baselines = []
-        for i, (train_episode, _) in enumerate(episodes):
-            self.exp_baseline.fit(train_episode, dice_grad[i])
-            dice_grad_baselines.append(self.exp_baseline(train_episode))
-        # ipdb.set_trace()
-        dice_wts_grad = [grad.detach()-base.squeeze(2).detach() for grad,base in zip(dice_grad,dice_grad_baselines)]
-        dice_grad_sum = 0
-        for i in range(len(self.dice_wts)):
-            dice_grad_sum+=dice_wts_grad[i]*self.dice_wts[i]
-        dice_grad_sum.sum().backward(retain_graph=True)
+        # dice_grad = torch.autograd.grad(old_loss,self.dice_wts,retain_graph=True)
+        # # ipdb.set_trace()
+        # dice_grad_baselines = []
+        # for i, (train_episode, _) in enumerate(episodes):
+        #     self.exp_baseline.fit(train_episode, dice_grad[i])
+        #     dice_grad_baselines.append(self.exp_baseline(train_episode))
+        # # ipdb.set_trace()
+        # dice_wts_grad = [grad.detach()-base.squeeze(2).detach() for grad,base in zip(dice_grad,dice_grad_baselines)]
+        # dice_grad_sum = 0
+        # for i in range(len(self.dice_wts)):
+        #     dice_grad_sum+=dice_wts_grad[i]*self.dice_wts[i]
+        # dice_grad_sum.sum().backward(retain_graph=True)
         self.exp_optimizer.step()
 
         wts = math.exp(-self.iter/5)
-        (old_loss+wts*reward_loss).backward()
+        (wts*reward_loss).backward()
         grad_vals = [ self.z_old.grad.abs().mean().item()
                     , self.policy.layer_pre1.weight.grad.abs().mean().item()
                     , self.exp_policy.layer_pre1.weight.grad.abs().mean().item()
