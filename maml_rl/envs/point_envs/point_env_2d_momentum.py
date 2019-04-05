@@ -1,4 +1,4 @@
-from meta_policy_search.envs.base import MetaEnv
+from maml_rl.envs.base import MetaEnv
 
 import numpy as np
 from gym.spaces import Box
@@ -86,6 +86,9 @@ class MetaPointEnvMomentum(MetaEnv):
 
     def get_task(self):
         return self.goal
+
+    def reset_task(self, task):
+        self.goal = task
 
 if __name__ == "__main__":
     env = MetaPointEnvMomentum()

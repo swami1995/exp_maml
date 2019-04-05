@@ -1,6 +1,7 @@
 import ipdb
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from torch.nn.utils.convert_parameters import (vector_to_parameters,
                                                parameters_to_vector)
 from torch.distributions.kl import kl_divergence
@@ -32,7 +33,7 @@ class MetaLearner(object):
         Pieter Abbeel, "Trust Region Policy Optimization", 2015
         (https://arxiv.org/abs/1502.05477)
     """
-    def __init__(self, sampler, policy, exp_policy, baseline, exp_baseline, reward_net, embed_size=100, gamma=0.95,
+    def __init__(self, sampler, policy, exp_policy, baseline, exp_baseline, reward_net, num_updates=3, embed_size=100, gamma=0.95,
                  fast_lr=0.5, tau=1.0, lr=7e-4, eps=1e-5, device='cpu'):
         self.sampler = sampler
         self.policy = policy
@@ -55,8 +56,12 @@ class MetaLearner(object):
         self.value_coeff = 0.5
         self.entropy_coeff = 0
         self.clamp_param = 0.2
+        self.num_updates = num_updates
         # pdb.set_trace()
         self.z_old = nn.Parameter(torch.zeros((1,embed_size)))
+        self.z_opt = torch.zeros((4,1,embed_size)).to(device)
+        for i in range(4):
+            self.z_opt[i,0,i*embed_size//4:(i+1)*embed_size//4] = 1
         nn.init.xavier_uniform_(self.z_old)
 
         self.to(device)
@@ -69,16 +74,17 @@ class MetaLearner(object):
         self.dice_wts = []
 
 
-    def inner_loss(self, episodes, exp_update='dice', params=None):
+    def inner_loss(self, episodes, updated_params, exp_update='dice', params=None):
         """Compute the inner loss for the one-step gradient update. The inner 
         loss is REINFORCE with baseline [2], computed on advantages estimated 
         with Generalized Advantage Estimation (GAE, [3]).
         """
         # pdb.set_trace()
         states, actions, rewards = episodes.observations, episodes.actions, episodes.rewards
-        rewards_pred = self.reward_net(states,actions,self.z).squeeze()
+        rewards_pred = self.reward_net(states,actions,updated_params['z']).squeeze()
         loss = (rewards - rewards_pred)**2
-        exp_pi, exp_value = self.exp_policy(states, self.z.detach())
+        loss = F.relu(loss - loss.mean().detach())
+        exp_pi, exp_value = self.exp_policy(states, updated_params['z'].detach()) #### TODO: Should this be detached?
         exp_log_probs_non_diff = episodes.action_probs
         exp_log_probs_diff = torch.zeros_like(exp_log_probs_non_diff)
                                                         #### TODO: Think of better objectives (predicting the reward function, hypothesis testing etc. which are denser)
@@ -106,30 +112,30 @@ class MetaLearner(object):
         # wts = episodes.mask* torch.exp(log_probs.detach()-exp_log_probs_non_diff)     #### TODO: Do we need importance sampling?
         # loss = weighted_mean(loss * advantages, dim=0,
             # weights=wts)
-        loss = loss.mean()
+        loss = loss.sum()/(loss>0).sum().float().detach()
         return loss
 
-    def adapt(self, episodes, first_order=False, exp_update='dice'):
+    def adapt(self, episodes, updated_params, first_order=False, exp_update='dice'):
         """Adapt the parameters of the policy network to a new task, from 
         sampled trajectories `episodes`, with a one-step gradient update [1].
         """
         # Fit the baseline to the training episodes
         # self.baseline.fit(episodes)
         # Get the loss on the training episodes
-        loss = self.inner_loss(episodes, exp_update)
+        loss = self.inner_loss(episodes, updated_params, exp_update)
         # Get the new parameters after a one-step gradient update
         # pdb.set_trace()
-        curr_params, updated_params = self.update_z(loss, step_size=self.fast_lr, first_order=first_order)
+        curr_params, updated_params = self.update_z(loss, updated_params, step_size=self.fast_lr, first_order=first_order)
 
         return curr_params, updated_params, loss
 
-    def update_z(self, loss, step_size=0.5, first_order=False):
-        grads = torch.autograd.grad(loss, self.z,
+    def update_z(self, loss, updated_params, step_size=0.5, first_order=False):
+        grads = torch.autograd.grad(loss, updated_params['z'],
             create_graph=not first_order)
-        updated_params = OrderedDict()
         curr_params = OrderedDict()
-        updated_params['z'] = self.z - step_size * grads[0]
-        curr_params['z'] = self.z
+        curr_params['z'] = updated_params['z']
+        updated_params = OrderedDict()
+        updated_params['z'] = curr_params['z'] - step_size * grads[0]
 
         return curr_params, updated_params
 
@@ -142,16 +148,20 @@ class MetaLearner(object):
         for task in tasks:
             
             self.sampler.reset_task(task)
-            curr_params = OrderedDict()
-            curr_params['z'] = self.z
-            train_episodes = self.sampler.sample(self.exp_policy, task, params=curr_params,
-                gamma=self.gamma, device=self.device)
+            updated_params = []
+            updated_param = OrderedDict()
+            updated_param['z'] = self.z
+            updated_params.append(updated_param)
+            train_episodes = []
+            for t in range(self.num_updates):
+                train_episodes.append(self.sampler.sample(self.exp_policy, task, params=self.z_opt,#updated_params[-1],
+                    gamma=self.gamma, device=self.device))
+                curr_param, updated_param, _ = self.adapt(train_episodes[-1], updated_params[-1], first_order=first_order)
+                updated_params.append(updated_param)
 
-            curr_params, updated_params, _ = self.adapt(train_episodes, first_order=first_order)
-
-            valid_episodes = self.sampler.sample(self.policy, task, params=updated_params,
+            valid_episodes = self.sampler.sample(self.policy, task, params=self.z_opt,# updated_params[-1],
                 gamma=self.gamma, device=self.device)
-            episodes.append((train_episodes, valid_episodes))
+            episodes.append((train_episodes, valid_episodes, updated_params))
         return episodes
 
     def kl_divergence(self, episodes, old_pis=None):
@@ -237,12 +247,19 @@ class MetaLearner(object):
 
         self.dice_wts = []
 
-        for (train_episodes, valid_episodes), old_pi in zip(episodes, old_pis):
-            curr_params, updated_params, reward_loss_before = self.adapt(train_episodes)
+        updated_params=OrderedDict()
+        updated_params['z'] = self.z
+        for (train_episodes, valid_episodes, _), old_pi in zip(episodes, old_pis):
+            reward_loss_before =[]
+            for t in range(self.num_updates):
+                curr_params, updated_params, reward_loss_before_i = self.adapt(train_episodes[t], updated_params)
+                reward_loss_before.append(reward_loss_before_i)
+            reward_loss_before = torch.stack(reward_loss_before).reshape((1,-1))
             with torch.set_grad_enabled(old_pi is None):
 
                 #### Policy Objective
-                pi, values = self.policy(valid_episodes.observations,updated_params['z'])#.detach())
+                pi, values = self.policy(valid_episodes.observations,self.z_opt[valid_episodes._task_id])#.detach())
+                # pi, values = self.policy(valid_episodes.observations,updated_params['z'])#.detach())
                 pis.append(detach_distribution(pi))
                 dist_loss = pi.entropy().mean()
 
@@ -253,8 +270,7 @@ class MetaLearner(object):
                 advantages = weighted_normalize(advantages,
                     weights=valid_episodes.mask)
 
-                log_ratio = (pi.log_prob(valid_episodes.actions)
-                    - old_pi.log_prob(valid_episodes.actions))
+                log_ratio = (pi.log_prob(valid_episodes.actions) - old_pi.log_prob(valid_episodes.actions))
                 if log_ratio.dim() > 2:
                     log_ratio = torch.sum(log_ratio, dim=2)
                 ratio = torch.exp(log_ratio)
@@ -283,11 +299,11 @@ class MetaLearner(object):
                 reward_loss = (rewards - rewards_pred)**2
                 reward_losses.append(reward_loss.mean())
                 reward_losses_before.append(reward_loss_before)
-                # ipdb.set_trace()
+        # ipdb.set_trace()
         return (torch.mean(torch.stack(losses, dim=0)),
                 torch.mean(torch.stack(kls, dim=0)), 
                 torch.mean(torch.stack(reward_losses,dim=0)),
-                torch.mean(torch.stack(reward_losses_before,dim=0)), pis)
+                torch.mean(torch.stack(reward_losses_before, dim=0), dim=0), pis)
 
     def test_func(self, episodes):
         losses, kls, pis, reward_losses, reward_losses_before = [], [], [], [], []

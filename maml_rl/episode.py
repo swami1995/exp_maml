@@ -1,7 +1,7 @@
 import numpy as np
 import torch
 import torch.nn.functional as F
-import pdb
+import ipdb
 
 class BatchEpisodes(object):
     def __init__(self, batch_size, task, gamma=0.95, device='cpu'):
@@ -23,6 +23,8 @@ class BatchEpisodes(object):
         self._returns = None
         self._mask = None
         self._task = task
+        self.corners = [np.array([-2,-2]), np.array([2,-2]), np.array([-2,2]), np.array([2, 2])]
+        self._task_id = np.argmax(task==self.corners)
 
     @property
     def observations(self):
@@ -105,6 +107,10 @@ class BatchEpisodes(object):
     @property
     def task(self):
         return self._task
+    
+    @property
+    def task_id(self):
+        return self._task_id
     
 
     def gae(self, values, tau=1.0):

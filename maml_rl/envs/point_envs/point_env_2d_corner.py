@@ -68,7 +68,7 @@ class MetaPointEnvCorner(gym.Env):
     def reward(self, obs, act, obs_next):
         if obs_next.ndim == 2:
             goal_distance = np.linalg.norm(obs_next - self._goal[None,:], axis=1)[0]
-            # ipdb.set_trace()
+            ipdb.set_trace()
             if self.reward_type == 'dense':
                 return - goal_distance
             elif self.reward_type == 'dense_squared':
