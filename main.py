@@ -32,8 +32,13 @@ def plotting(episodes, batch, save_folder,n):
         corners = np.array([np.array([-2,-2]), np.array([2,-2]), np.array([-2,2]), np.array([2, 2])])
         # cmap = cm.get_cmap('PiYG', len(train_ep)+1)
         for i in range(len(train_ep)):
-            train_obs = train_ep[i].observations[:,0].cpu().numpy()
-            plt.plot(train_obs[:,0], train_obs[:,1], label='exploring agent'+str(i))
+            for k in range(1):
+                train_obs = train_ep[i].observations[:,k].cpu().numpy()
+                train_obs = np.maximum(train_obs, -4)
+                train_obs = np.minimum(train_obs, 4)
+                plt.plot(train_obs[:,0], train_obs[:,1], label='exploring agent'+str(i)+str(k))
+        val_obs = np.maximum(val_obs, -4)
+        val_obs = np.minimum(val_obs, 4)
         plt.plot(val_obs[:,0], val_obs[:,1], label='trained agent')
         plt.legend()
         plt.scatter(corners[:,0], corners[:,1], s=10, color='g')
@@ -116,16 +121,19 @@ def main(args):
     exp_baseline = LinearFeatureBaseline(
         int(np.prod(sampler.envs.observation_space.shape)))
 
-    if args.load_dir is not None:
-        folder_idx = args.load_dir.split('.')
-        load_folder = './saves/{0}'.format(args.env_name+'/'+folder_idx[0])
-        policy.load_state_dict(torch.load(load_folder+'policy-{0}.pt'.format(folder_idx[1])))
-        exp_policy.load_state_dict(torch.load(load_folder+'policy-{0}-exp.pt'.format(folder_idx[1])))
-        reward_net.load_state_dict(torch.load(load_folder+'reward-{0}.pt'.format(folder_idx[1])))
 
     metalearner = MetaLearner(sampler, policy, exp_policy, baseline, exp_baseline, reward_net, 
         num_updates=args.num_updates, embed_size=args.embed_size, gamma=args.gamma,
         fast_lr=args.fast_lr, tau=args.tau, lr=args.exp_lr, eps=args.exp_eps, device=args.device)
+
+    metalearner.policy.load_state_dict(torch.load('./saves/{0}'.format(args.env_name+'/21/policy-999.pt')))
+    if args.load_dir is not None:
+        folder_idx = args.load_dir.split('/')
+        load_folder = './saves/{0}'.format(args.env_name+'/'+folder_idx[0])
+        metalearner.policy.load_state_dict(torch.load(load_folder+'policy-{0}.pt'.format(folder_idx[1])))
+        metalearner.exp_policy.load_state_dict(torch.load(load_folder+'policy-{0}-exp.pt'.format(folder_idx[1])))
+        metalearner.reward_net.load_state_dict(torch.load(load_folder+'reward-{0}.pt'.format(folder_idx[1])))
+        metalearner.z_old.copy_(torch.load(load_folder+'z_old-{0}.pt'.format(folder_idx[1]))['z_old'])
 
     best_reward_after=-400
     for batch in range(args.num_batches):
@@ -138,13 +146,14 @@ def main(args):
 
         reward_after = total_rewards([ep.rewards for _, ep, _ in episodes])
         for i in range(args.num_updates):
-            print('total_rewards/before_update_'+str(i), total_rewards([ep[i].rewards for ep, _, _ in episodes]), batch)
-        print('total_rewards/after_update', total_rewards([ep.rewards for _, ep, _ in episodes]), batch)
-        print('reward_loss/before_update', r_loss[0], batch)
-        print('reward_loss/after_update', r_loss[1], batch)
-        print('pg_loss/after_update', pg_loss, batch)
+            print('total_rewards/before_update_'+str(i), "{:.4f}".format(total_rewards([ep[i].rewards for ep, _, _ in episodes])), batch)
+        print('total_rewards/after_update', total_rewards([ep.rewards for _, ep, _ in episodes]))
+        print('reward_loss/before_update', r_loss[0].detach().cpu().numpy())
+        print('reward_loss/after_update', "{:.4f}".format(r_loss[1].item()))
+        print('pg_loss/after_update',"{:.4f}".format(pg_loss.item()))
 
         if args.load_dir is not None:
+            plotting(episodes, batch, save_folder,args.num_plots)
             sys.exit(0)
             
         # Tensorboard
@@ -164,7 +173,7 @@ def main(args):
         writer.add_scalar('grad_vals/reward_net', grad_vals[3], batch)  
 
         ## Save policy network
-        if batch%20==0 or reward_after > best_reward_after:
+        if batch%5==0:# or reward_after > best_reward_after:
             with open(os.path.join(save_folder,
                     'policy-{0}.pt'.format(batch)), 'wb') as f:
                 torch.save(policy.state_dict(), f)
@@ -174,6 +183,9 @@ def main(args):
             with open(os.path.join(save_folder,
                     'reward-{0}.pt'.format(batch)), 'wb') as f:
                 torch.save(reward_net.state_dict(), f)
+            with open(os.path.join(save_folder,
+                    'z_old-{0}.pt'.format(batch)), 'wb') as f:
+                torch.save({'z_old':metalearner.z_old}, f)
             best_reward_after = reward_after
             # Plotting figure
             plotting(episodes, batch, save_folder,args.num_plots)

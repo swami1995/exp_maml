@@ -35,7 +35,8 @@ class MetaPointEnvMomentum(MetaEnv):
         """
         prev_state = self._state
         self._velocity += np.clip(action, -0.1, 0.1)
-        self._state = prev_state + self._velocity
+        self._state = np.maximum(prev_state + self._velocity,-4)
+        self._state = np.minimum(self._state,4)
         reward = self.reward(prev_state, action, self._state)
         done = False # self.done(self._state)
         next_observation = np.hstack((self._state, self._velocity))
