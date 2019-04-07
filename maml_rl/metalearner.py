@@ -101,11 +101,11 @@ class MetaLearner(object):
             self.dice_wts.append(torch.exp(exp_log_probs_diff.sum(dim=2) - exp_log_probs_non_diff.sum(dim=2)))  #### TODO: This might be high variance so reconsider it later maybe.
             self.dice_wts_detached.append(self.dice_wts[-1].detach())
             self.dice_wts_detached[-1].requires_grad_()
-            cum_wts = torch.exp(torch.log(self.dice_wts_detached[-1]).cumsum(dim=0))
+            # cum_wts = torch.exp(torch.log(self.dice_wts_detached[-1]).cumsum(dim=0))
             # self.dice_wts_copy = tor
-            loss *= cum_wts
-            self.exp_values.append(exp_value)
-            # loss *= self.dice_wts[-1]
+            # loss *= cum_wts
+            # self.exp_values.append(exp_value)
+            loss *= self.dice_wts_detached[-1]
 
         if self.check:
             self.check=False
@@ -352,7 +352,7 @@ class MetaLearner(object):
         # pdb.set_trace()
         # self.conjugate_gradient_update(episodes, max_kl, cg_iters, cg_damping,            #### TODO: Deprecated, won't work. Fix the TODO below first.
         #                                         ls_max_steps, ls_backtrack_ratio)
-        grad_vals = self.gradient_descent_update(10*old_loss,reward_loss_after*1, episodes)
+        grad_vals = self.gradient_descent_update(old_loss,reward_loss_after*0.5, episodes)
         # ipdb.set_trace()
         return ((reward_loss_before, reward_loss_after)), old_loss, grad_vals
 
