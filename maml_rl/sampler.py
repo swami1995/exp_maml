@@ -4,11 +4,13 @@ import multiprocessing as mp
 
 from maml_rl.envs.subproc_vec_env import SubprocVecEnv
 from maml_rl.episode import BatchEpisodes
-import pdb
+
+
 def make_env(env_name):
     def _make_env():
         return gym.make(env_name)
     return _make_env
+
 
 class BatchSampler(object):
     def __init__(self, env_name, batch_size, num_workers=mp.cpu_count() - 1):
@@ -36,7 +38,7 @@ class BatchSampler(object):
                 action_probs_tensor = policy(observations_tensor, params['z'])
                 actions_tensor = action_probs_tensor.sample()
                 actions = actions_tensor.cpu().numpy()
-                action_probs = action_probs_tensor.log_prob(actions_tensor).detach().cpu().numpy()   ### not sure need to chec indexing
+                action_probs = action_probs_tensor.log_prob(actions_tensor).detach().cpu().numpy()   # Not sure need to check indexing
             new_observations, rewards, dones, new_batch_ids, _ = self.envs.step(actions)
             episodes.append(observations, actions, rewards, batch_ids, action_probs)
             observations, batch_ids = new_observations, new_batch_ids

@@ -1,7 +1,7 @@
 import numpy as np
 import torch
 import torch.nn.functional as F
-import pdb
+
 
 class BatchEpisodes(object):
     def __init__(self, batch_size, task, gamma=0.95, device='cpu'):
@@ -95,7 +95,6 @@ class BatchEpisodes(object):
     @property
     def task(self):
         return self._task
-    
 
     def gae(self, values, tau=1.0):
         # Add an additional 0 at the end of values for
@@ -121,5 +120,6 @@ class BatchEpisodes(object):
             self._actions_list[batch_id].append(action.astype(np.float32))
             self._rewards_list[batch_id].append(reward.astype(np.float32))
             self._action_probs_list[batch_id].append(action_prob.astype(np.float32))
+
     def __len__(self):
         return max(map(len, self._rewards_list))
