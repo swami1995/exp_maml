@@ -116,6 +116,7 @@ class BatchEpisodes(object):
     def gae(self, values, tau=1.0):
         # Add an additional 0 at the end of values for
         # the estimation at the end of the episode
+        # ipdb.set_trace()
         values = values.squeeze(2).detach()
         values = F.pad(values * self.mask, (0, 0, 0, 1))
 

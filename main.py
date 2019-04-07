@@ -150,7 +150,7 @@ def main(args):
         print('total_rewards/after_update', total_rewards([ep.rewards for _, ep, _ in episodes]))
         print('reward_loss/before_update', r_loss[0].detach().cpu().numpy())
         print('reward_loss/after_update', "{:.4f}".format(r_loss[1].item()))
-        print('pg_loss/after_update',"{:.4f}".format(pg_loss.item()))
+        print('pg_loss/after_update',"{:.9f}".format(pg_loss.item()))
 
         if args.load_dir is not None:
             plotting(episodes, batch, save_folder,args.num_plots)

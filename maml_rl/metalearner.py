@@ -72,6 +72,8 @@ class MetaLearner(object):
         self.check=False       
         self.iter = 0
         self.dice_wts = []
+        self.dice_wts_detached = []
+        self.exp_values = []
         self.clip = 0.5
 
 
@@ -97,9 +99,13 @@ class MetaLearner(object):
             # ipdb.set_trace()
             exp_log_probs_diff = exp_pi.log_prob(episodes.actions)
             self.dice_wts.append(torch.exp(exp_log_probs_diff.sum(dim=2) - exp_log_probs_non_diff.sum(dim=2)))  #### TODO: This might be high variance so reconsider it later maybe.
-            cum_wts = torch.exp(torch.log(self.dice_wts[-1]).cumsum(dim=0))
+            self.dice_wts_detached.append(self.dice_wts[-1].detach())
+            self.dice_wts_detached[-1].requires_grad_()
+            cum_wts = torch.exp(torch.log(self.dice_wts_detached[-1]).cumsum(dim=0))
             # self.dice_wts_copy = tor
             loss *= cum_wts
+            self.exp_values.append(exp_value)
+            # loss *= self.dice_wts[-1]
 
         if self.check:
             self.check=False
@@ -248,7 +254,8 @@ class MetaLearner(object):
             old_pis = [None] * len(episodes)
 
         self.dice_wts = []
-
+        self.exp_values = []
+        self.dice_wts_detached = []
         updated_params=OrderedDict()
         updated_params['z'] = self.z
         for (train_episodes, valid_episodes, _), old_pi in zip(episodes, old_pis):
@@ -262,13 +269,15 @@ class MetaLearner(object):
                 reward_loss = (rewards - rewards_pred)**2
                 reward_loss_before.append(reward_loss.mean())
             reward_loss_before = torch.stack(reward_loss_before).reshape((1,-1))
+            self.baseline.fit(valid_episodes)
             with torch.set_grad_enabled(old_pi is None):
 
                 #### Policy Objective
-                pi, values = self.policy(valid_episodes.observations,self.z_opt[valid_episodes._task_id])#.detach())
-                # pi, values = self.policy(valid_episodes.observations,updated_params['z'])#.detach())
+                # pi, values = self.policy(valid_episodes.observations,self.z_opt[valid_episodes._task_id])#.detach())
+                pi, _ = self.policy(valid_episodes.observations,updated_params['z'])#.detach())
                 pis.append(detach_distribution(pi))
                 dist_loss = pi.entropy().mean()
+                values = self.baseline(valid_episodes)
 
                 if old_pi is None:
                     old_pi = detach_distribution(pi)
@@ -284,11 +293,10 @@ class MetaLearner(object):
                 surr1 = ratio * advantages
                 surr2 = torch.clamp(ratio, 1 - self.clamp_param, 1 + self.clamp_param)*advantages
                 action_loss = -torch.min(surr1, surr2)
-                actions_loss = weighted_mean(action_loss, dim=0,
-                    weights=valid_episodes.mask)
+                actions_loss = weighted_mean(action_loss, dim=0, weights=valid_episodes.mask)
                 # ipdb.set_trace()
                 value_loss = 0.5 * (returns - values.squeeze(2)).pow(2).mean()
-                loss = action_loss + self.value_coeff*value_loss + self.entropy_coeff*dist_loss
+                loss = action_loss# + self.value_coeff*value_loss + self.entropy_coeff*dist_loss
                 losses.append(loss)
                 
 
@@ -344,7 +352,7 @@ class MetaLearner(object):
         # pdb.set_trace()
         # self.conjugate_gradient_update(episodes, max_kl, cg_iters, cg_damping,            #### TODO: Deprecated, won't work. Fix the TODO below first.
         #                                         ls_max_steps, ls_backtrack_ratio)
-        grad_vals = self.gradient_descent_update(old_loss,reward_loss_after*1, episodes)
+        grad_vals = self.gradient_descent_update(10*old_loss,reward_loss_after*1, episodes)
         # ipdb.set_trace()
         return ((reward_loss_before, reward_loss_after)), old_loss, grad_vals
 
@@ -354,27 +362,39 @@ class MetaLearner(object):
         self.policy_optimizer.zero_grad()
         self.exp_optimizer.zero_grad()
         self.iter+=1
+        wts = 1#math.exp(-self.iter/5)
         # if self.iter%2==1:
         #     ipdb.set_trace()
         
         # (old_loss).backward(retain_graph=True)
-
-        # dice_grad = torch.autograd.grad(old_loss,self.dice_wts,retain_graph=True)
-        # # ipdb.set_trace()
-        # dice_grad_baselines = []
-        # for i, (train_episode, _) in enumerate(episodes):
-        #     self.exp_baseline.fit(train_episode, dice_grad[i])
-        #     dice_grad_baselines.append(self.exp_baseline(train_episode))
-        # # ipdb.set_trace()
+        # ipdb.set_trace()
+        dice_grad = torch.autograd.grad(wts*reward_loss+old_loss,self.dice_wts_detached,retain_graph=True)
+        # ipdb.set_trace()
+        dice_wts_grad = []
+        for i, (train_episodes, valid_episodes, _) in enumerate(episodes):
+            returns = self.get_returns(dice_grad[i])
+            self.exp_baseline.fit(train_episodes[0], returns)
+            values = self.baseline(train_episodes[0])
+            advantages, returns = self.gae(values,dice_grad[i], tau=self.tau)
+            advantages = weighted_normalize(advantages)#, weights=valid_episodes.mask)
+            # log_ratio = (pi.log_prob(train_episodes[0].actions) - old_pi.log_prob(train_episodes[0].actions))
+            # if log_ratio.dim() > 2:
+            #     log_ratio = torch.sum(log_ratio, dim=2)
+            # ratio = torch.exp(log_ratio)
+            ratio = self.dice_wts[i]
+            action_loss = ratio * advantages
+            # value_loss = 0.5 * (returns - self.exp_values[i].squeeze(2)).pow(2).mean()
+            loss = action_loss #+ self.entropy_coeff*dist_loss
+            dice_wts_grad.append(loss)
         # dice_wts_grad = [grad.detach()-base.squeeze(2).detach() for grad,base in zip(dice_grad,dice_grad_baselines)]
-        # dice_grad_sum = 0
-        # for i in range(len(self.dice_wts)):
-        #     dice_grad_sum+=dice_wts_grad[i]*self.dice_wts[i]
-        # dice_grad_sum.sum().backward(retain_graph=True)
+        dice_grad_sum = 0
+        for i in range(len(self.dice_wts)):
+            dice_grad_sum+=dice_wts_grad[i]#*self.dice_wts[i]
+        dice_grad_sum.sum().backward()
         # nn.utils.clip_grad_norm_(self.exp_policy.parameters(),self.clip)
         # self.exp_optimizer.step()
 
-        wts = 1#math.exp(-self.iter/5)
+        
         (wts*reward_loss+old_loss).backward()
         nn.utils.clip_grad_norm_(self.policy.parameters(),self.clip)
         nn.utils.clip_grad_norm_(self.reward_net.parameters(),self.clip)
@@ -458,3 +478,27 @@ class MetaLearner(object):
         self.reward_net.to(device, **kwargs)
         self.z = self.z_old.to(device, **kwargs)
         self.device = device
+
+    def gae(self, values, rewards, tau=1.0):
+        # Add an additional 0 at the end of values for
+        # the estimation at the end of the episode
+        values = values.squeeze(2).detach()
+        values = F.pad(values, (0, 0, 0, 1))
+
+        deltas = rewards + self.gamma * values[1:] - values[:-1]
+        advantages = torch.zeros_like(deltas).float()
+        gae = torch.zeros_like(deltas[0]).float()
+        for i in range(len(rewards) - 1, -1, -1):
+            gae = gae * self.gamma * tau + deltas[i]
+            advantages[i] = gae
+        returns = values[:-1] + advantages
+        return advantages, returns
+
+    def get_returns(self, rewards):
+        return_ = torch.zeros(rewards.shape[1]).to(self.device)
+        returns = torch.zeros(rewards.shape[:2]).to(self.device)
+        rewards = rewards#.cpu().numpy()
+        for i in range(len(rewards) - 1, -1, -1):
+            return_ = self.gamma * return_ + rewards[i] 
+            returns[i] = return_
+        return returns#torch.from_numpy(returns).to(self.device)
