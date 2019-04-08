@@ -44,11 +44,11 @@ class MetaLearner(object):
         self.gamma = gamma
         self.fast_lr = fast_lr
         self.tau = tau
-        self.lr_r = lr
+        self.lr_r = lr*10
         self.eps_r = eps
-        self.lr_z = lr*0.1
+        self.lr_z = lr
         self.eps_z = eps
-        self.lr_p = lr
+        self.lr_p = lr * 10
         self.eps_p = eps
         self.lr_e = lr*0.10
         self.eps_e = eps
@@ -86,6 +86,7 @@ class MetaLearner(object):
         states, actions, rewards = episodes.observations, episodes.actions, episodes.rewards
         rewards_pred = self.reward_net(states,actions,current_params['z']).squeeze()
         loss = (rewards - rewards_pred)**2
+        # ipdb.set_trace()
         exp_pi, exp_value = self.exp_policy(states, current_params['z'].detach()) #### TODO: Should this be detached?
         exp_log_probs_non_diff = episodes.action_probs
         exp_log_probs_diff = torch.zeros_like(exp_log_probs_non_diff)
@@ -362,7 +363,7 @@ class MetaLearner(object):
         self.policy_optimizer.zero_grad()
         self.exp_optimizer.zero_grad()
         self.iter+=1
-        wts = 1#math.exp(-self.iter/5)
+        wts = math.exp(-self.iter/10)
         # if self.iter%2==1:
         #     ipdb.set_trace()
         
@@ -374,7 +375,7 @@ class MetaLearner(object):
         for i, (train_episodes, valid_episodes, _) in enumerate(episodes):
             returns = self.get_returns(dice_grad[i])
             self.exp_baseline.fit(train_episodes[0], returns)
-            values = self.baseline(train_episodes[0])
+            values = self.exp_baseline(train_episodes[0])
             advantages, returns = self.gae(values,dice_grad[i], tau=self.tau)
             advantages = weighted_normalize(advantages)#, weights=valid_episodes.mask)
             # log_ratio = (pi.log_prob(train_episodes[0].actions) - old_pi.log_prob(train_episodes[0].actions))

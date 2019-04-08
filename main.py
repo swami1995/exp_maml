@@ -32,7 +32,7 @@ def plotting(episodes, batch, save_folder,n):
         corners = np.array([np.array([-2,-2]), np.array([2,-2]), np.array([-2,2]), np.array([2, 2])])
         # cmap = cm.get_cmap('PiYG', len(train_ep)+1)
         for i in range(len(train_ep)):
-            for k in range(1):
+            for k in range(5):
                 train_obs = train_ep[i].observations[:,k].cpu().numpy()
                 train_obs = np.maximum(train_obs, -4)
                 train_obs = np.minimum(train_obs, 4)
@@ -126,7 +126,7 @@ def main(args):
         num_updates=args.num_updates, embed_size=args.embed_size, gamma=args.gamma,
         fast_lr=args.fast_lr, tau=args.tau, lr=args.exp_lr, eps=args.exp_eps, device=args.device)
 
-    metalearner.policy.load_state_dict(torch.load('./saves/{0}'.format(args.env_name+'/21/policy-999.pt')))
+    # metalearner.policy.load_state_dict(torch.load('./saves/{0}'.format(args.env_name+'/21/policy-999.pt')))
     if args.load_dir is not None:
         folder_idx = args.load_dir.split('/')
         load_folder = './saves/{0}'.format(args.env_name+'/'+folder_idx[0])

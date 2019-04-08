@@ -10,7 +10,7 @@ class MetaPointEnvMomentum(MetaEnv):
     (one of the 4 points (-2,-2), (-2, 2), (2, -2), (2,2)) which are sampled with equal probability
     """
 
-    def __init__(self, reward_type='sparse', sparse_reward_radius=2):
+    def __init__(self, reward_type='dense', sparse_reward_radius=2):
         assert reward_type in ['dense', 'dense_squared', 'sparse']
         self.reward_type = reward_type
         print("Point Env reward type is", reward_type)
