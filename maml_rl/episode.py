@@ -22,6 +22,8 @@ class BatchEpisodes(object):
         self._returns = None
         self._mask = None
         self._task = task
+        self.corners = [np.array([-2,-2]), np.array([2,-2]), np.array([-2,2]), np.array([2, 2])]
+        self._task_id = np.argmax(task==self.corners)
 
     @property
     def observations(self):
