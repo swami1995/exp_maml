@@ -1,5 +1,6 @@
 import ipdb
 import torch
+import torch.nn.functional as F
 import torch.nn as nn
 from torch.nn.utils.convert_parameters import (vector_to_parameters,
                                                parameters_to_vector)
@@ -32,7 +33,7 @@ class MetaLearner(object):
         Pieter Abbeel, "Trust Region Policy Optimization", 2015
         (https://arxiv.org/abs/1502.05477)
     """
-    def __init__(self, sampler, policy, exp_policy, baseline, exp_baseline, reward_net, embed_size=100, gamma=0.95,
+    def __init__(self, sampler, policy, exp_policy, baseline, exp_baseline, reward_net, reward_net_outer, embed_size=100, gamma=0.95,
                  fast_lr=0.5, tau=1.0, lr=7e-4, eps=1e-5, device='cpu'):
         self.sampler = sampler
         self.policy = policy
@@ -40,18 +41,23 @@ class MetaLearner(object):
         self.baseline = baseline
         self.exp_baseline = exp_baseline
         self.reward_net = reward_net
+        self.reward_net_outer = reward_net_outer
         self.gamma = gamma
         self.fast_lr = fast_lr
         self.tau = tau
-        self.lr_r = lr
+        self.lr_r = lr*10
         self.eps_r = eps
         self.lr_z = lr*0.1
         self.eps_z = eps
         self.lr_p = lr
         self.eps_p = eps
-        self.lr_e = lr*0.10
+        self.lr_e = lr
         self.eps_e = eps
+        self.lr_ro = lr
+        self.eps_ro = eps
         self.embed_size = embed_size
+        self.alpha = 5e-8
+        self.clip = 0.5
         self.z_old = nn.Parameter(torch.zeros((1,embed_size)))
         nn.init.xavier_uniform_(self.z_old)
 
@@ -60,9 +66,12 @@ class MetaLearner(object):
         self.reward_optimizer = optim.Adam(self.reward_net.parameters(), lr=self.lr_r, eps=self.eps_r)
         self.policy_optimizer = optim.Adam(self.policy.parameters(), lr=self.lr_p, eps=self.eps_p)
         self.exp_optimizer = optim.Adam(self.exp_policy.parameters(), lr=self.lr_e, eps=self.eps_e)
+        self.reward_outer_optimizer = optim.Adam(self.reward_net_outer.parameters(), lr=self.lr_ro, eps=self.eps_ro)
         self.check=False       
         self.iter = 0
-
+        self.dice_wts = []
+        self.dice_wts_detached = []
+        self.exp_entropy = []
 
     def inner_loss(self, episodes, exp_update='dice', params=None):
         """Compute the inner loss for the one-step gradient update. The inner 
@@ -73,6 +82,9 @@ class MetaLearner(object):
         rewards_pred = self.reward_net(states,actions,self.z).squeeze()
         loss = (rewards - rewards_pred)**2
         exp_pi = self.exp_policy(states, self.z.detach())
+        self.exp_entropy.append(exp_pi.entropy().sum(dim=2))
+        # ipdb.set_trace()
+        
         exp_log_probs_non_diff = episodes.action_probs
         exp_log_probs_diff = torch.zeros_like(exp_log_probs_non_diff)
         
@@ -87,7 +99,10 @@ class MetaLearner(object):
             exp_log_probs_diff = exp_pi.log_prob(episodes.actions)
             # TODO: This might be high variance so reconsider it later maybe.
             dice_wts = torch.exp(exp_log_probs_diff.sum(dim=2) - exp_log_probs_non_diff.sum(dim=2))  
-            loss *= dice_wts
+            self.dice_wts.append(dice_wts)
+            self.dice_wts_detached.append(dice_wts.detach())
+            self.dice_wts_detached[-1].requires_grad_()
+            loss *= self.dice_wts_detached[-1]
 
         if self.check:
             self.check=False
@@ -229,10 +244,18 @@ class MetaLearner(object):
         if old_pis is None:
             old_pis = [None] * len(episodes)
 
+        self.dice_wts = []
+        self.dice_wts_detached = []
+        self.exp_entropy = []
         for (train_episodes, valid_episodes), old_pi in zip(episodes, old_pis):
             curr_params, updated_params, reward_loss_before = self.adapt(train_episodes)
             self.baseline.fit(valid_episodes)
             # old_pi = curr_params
+            with torch.no_grad():
+                states, actions, rewards = valid_episodes.observations, valid_episodes.actions, valid_episodes.rewards
+                rewards_pred = self.reward_net_outer(states,actions,curr_params['z']).squeeze()
+                reward_loss = (rewards - rewards_pred)**2
+                reward_loss_before = reward_loss.mean()
             with torch.set_grad_enabled(old_pi is None):
 
                 # Policy Objective
@@ -266,7 +289,7 @@ class MetaLearner(object):
 
                 # Reward Objective
                 states, actions, rewards = valid_episodes.observations, valid_episodes.actions, valid_episodes.rewards
-                rewards_pred = self.reward_net(states,actions,updated_params['z']).squeeze()
+                rewards_pred = self.reward_net_outer(states,actions,updated_params['z'].detach()).squeeze()
                 reward_loss = (rewards - rewards_pred)**2
                 reward_losses.append(reward_loss.mean())
                 reward_losses_before.append(reward_loss_before)
@@ -306,25 +329,79 @@ class MetaLearner(object):
         # TODO: Depcretaed, won't work. Fix the TODO below first.
         # self.conjugate_gradient_update(episodes, max_kl, cg_iters, cg_damping,            
         #                                         ls_max_steps, ls_backtrack_ratio)
-        self.gradient_descent_update(old_loss*10,reward_loss_after*1)
-        return ((reward_loss_before, reward_loss_after)), old_loss
+        grad_vals = self.gradient_descent_update(old_loss*10,reward_loss_after*1, episodes)
+        return ((reward_loss_before, reward_loss_after)), old_loss, grad_vals
 
-    def gradient_descent_update(self, old_loss, reward_loss):
+    def gradient_descent_update(self, old_loss, reward_loss, episodes):
         self.z_optimizer.zero_grad()
         self.reward_optimizer.zero_grad()
         self.policy_optimizer.zero_grad()
         self.exp_optimizer.zero_grad()
         self.iter+=1
-        wts = math.exp(-self.iter/5)
+        wts1 = math.exp(-self.iter/5)
+        wts = 1
+        
+        # ipdb.set_trace()
+        dice_grad = torch.autograd.grad(old_loss#+wts1*reward_loss 
+            ,self.dice_wts_detached,retain_graph=True)
+        # print('Gradient: ',dice_grad[0].abs().mean(),'Entropy:', self.exp_entropy[0].abs().mean())
+        # print('Gradient: ',dice_grad[0].abs().mean(),'Rewards:', episodes[0][0].rewards.abs().mean())
+        # ipdb.set_trace()
+        dice_wts_grad = []
+        for i, (train_episodes, valid_episodes) in enumerate(episodes):
+            normalized_entropy = weighted_normalize(self.exp_entropy[i])
+            dice_grad_normalized = weighted_normalize(dice_grad[i])
+            normalized_rewards = - dice_grad_normalized + weighted_normalize(train_episodes.rewards) #\
+                                #+ normalized_entropy  #
+            returns = self.get_returns(normalized_rewards).detach()
+            self.exp_baseline.fit(train_episodes, returns)
+            values = self.exp_baseline(train_episodes)
+            advantages, returns = self.gae(values,normalized_rewards, tau=self.tau)
+            advantages = weighted_normalize(advantages)#, weights=valid_episodes.mask)
+
+            # pi = self.exp_policy(train_episodes.observations,self.z.detach())
+            # old_pi = detach_distribution(pi)
+            # log_ratio = (pi.log_prob(train_episodes.actions) - old_pi.log_prob(train_episodes.actions))
+            # if log_ratio.dim() > 2:
+            #     log_ratio = torch.sum(log_ratio, dim=2)
+            # ratio = torch.exp(log_ratio)
+            ratio = self.dice_wts[i]
+
+            action_loss = -ratio * advantages.detach()
+            # value_loss = 0.5 * (returns - self.exp_values[i].squeeze(2)).pow(2).mean()
+            loss = action_loss #+ self.entropy_coeff*dist_loss
+            dice_wts_grad.append(loss)
+        # dice_wts_grad = [grad.detach()-base.squeeze(2).detach() for grad,base in zip(dice_grad,dice_grad_baselines)]
+        dice_grad_mean = 0
+        for i in range(len(self.dice_wts)):
+            dice_grad_mean+=dice_wts_grad[i].mean()*0.1#/len(self.dice_wts)
+        # ipdb.set_trace()
+        dice_grad_mean.mean().backward()
+
+
         (old_loss+wts*reward_loss).backward()
-        print("z_grad", self.z_old.grad.abs().mean())
-        print("policy_grad", self.policy.layer_pre1.weight.grad.abs().mean())
-        print("exp_policy_grad", self.exp_policy.layer_pre1.weight.grad.abs().mean())
-        print("reward_grad", self.reward_net.layer_pre1.weight.grad.abs().mean())
+        nn.utils.clip_grad_norm_(self.policy.parameters(),self.clip)
+        nn.utils.clip_grad_norm_(self.reward_net.parameters(),self.clip)
+        nn.utils.clip_grad_norm_([self.z_old],self.clip)
+        nn.utils.clip_grad_norm_(self.exp_policy.parameters(),self.clip)
+        nn.utils.clip_grad_norm_(self.reward_net_outer.parameters(),self.clip)
+
+        grad_vals = [self.z_old.grad.abs().mean().item()
+                    , self.policy.layer_pre1.weight.grad.abs().mean().item()
+                    ,self.exp_policy.layer_pre1.weight.grad.abs().mean().item()
+                    ,self.reward_net.layer_pre1.weight.grad.abs().mean().item()
+                    ,self.reward_net_outer.layer_pre1.weight.grad.abs().mean().item()]
+        print("z_grad", "{:.9f}".format(grad_vals[0]))
+        print("policy_grad", "{:.9f}".format(grad_vals[1]))
+        print("exp_policy_grad", "{:.9f}".format(grad_vals[2]))
+        print("reward_grad", "{:.9f}".format(grad_vals[3]))
+        print("reward_grad_outer", "{:.9f}".format(grad_vals[4]))
         self.z_optimizer.step()
         self.reward_optimizer.step()
+        self.reward_outer_optimizer.step()
         self.policy_optimizer.step()
         self.exp_optimizer.step()
+        return grad_vals
 
     # def conjugate_gradient_update(self, grads, episodes, max_kl, cg_iters, 
     #                               cg_damping, ls_max_steps, ls_backtrack_ratio):
@@ -391,5 +468,30 @@ class MetaLearner(object):
         self.exp_policy.to(device, **kwargs)
         self.exp_baseline.to(device, **kwargs)
         self.reward_net.to(device, **kwargs)
+        self.reward_net_outer.to(device, **kwargs)
         self.z = self.z_old.to(device, **kwargs)
         self.device = device
+
+    def get_returns(self, rewards):
+        return_ = torch.zeros(rewards.shape[1]).to(self.device)
+        returns = torch.zeros(rewards.shape[:2]).to(self.device)
+        rewards = rewards#.cpu().numpy()
+        for i in range(len(rewards) - 1, -1, -1):
+            return_ = self.gamma * return_ + rewards[i].detach()
+            returns[i] = return_
+        return returns#torch.from_numpy(returns).to(self.device)
+
+    def gae(self, values, rewards, tau=1.0):
+        # Add an additional 0 at the end of values for
+        # the estimation at the end of the episode
+        values = values.squeeze(2).detach()
+        values = F.pad(values, (0, 0, 0, 1))
+
+        deltas = rewards + self.gamma * values[1:] - values[:-1]
+        advantages = torch.zeros_like(deltas).float()
+        gae = torch.zeros_like(deltas[0]).float()
+        for i in range(len(rewards) - 1, -1, -1):
+            gae = gae * self.gamma * tau + deltas[i]
+            advantages[i] = gae
+        returns = values[:-1] + advantages
+        return advantages, returns

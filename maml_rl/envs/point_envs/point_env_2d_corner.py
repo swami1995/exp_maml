@@ -10,7 +10,7 @@ class MetaPointEnvCorner(gym.Env):
     (one of the 4 points (-2,-2), (-2, 2), (2, -2), (2,2)) which are sampled with equal probability
     """
 
-    def __init__(self, reward_type='dense', sparse_reward_radius=0.5, task = {}):
+    def __init__(self, reward_type='sparse', sparse_reward_radius=2, task = {}):
         super(MetaPointEnvCorner,self).__init__()
 
         assert reward_type in ['dense', 'dense_squared', 'sparse']
@@ -41,7 +41,8 @@ class MetaPointEnvCorner(gym.Env):
             info : a dictionary containing other diagnostic information from the previous action
         """
         prev_state = self._state
-        self._state = prev_state + np.clip(action, -0.2, 0.2)
+        self._state = np.maximum(prev_state + np.clip(action, -0.2, 0.2),-4)
+        self._state = np.minimum(self._state,4)
         reward = self.reward(prev_state, action, self._state)
         done = False # self.done(self._state)
         next_observation = np.copy(self._state)
@@ -74,14 +75,14 @@ class MetaPointEnvCorner(gym.Env):
             elif self.reward_type == 'dense_squared':
                 return - goal_distance**2
             elif self.reward_type == 'sparse':
-                dist_from_start = np.linalg.norm(obs_next, ord=1, axis=1)[0]
-                if dist_from_start < self.sparse_reward_radius:
-                    return 0
-                dists = [np.linalg.norm(obs_next - corner[None, :], axis=1) for corner in self.corners]
-                if np.min(goal_distance) == min(dists):
-                    return np.linalg.norm(obs - self._goal[None,:], axis=1)[0] - goal_distance
-                return 0
-                # return np.maximum(self.sparse_reward_radius - goal_distance, 0)
+                return np.maximum(self.sparse_reward_radius - goal_distance, 0)
+                # dist_from_start = np.linalg.norm(obs_next, ord=1, axis=1)[0]
+                # if dist_from_start < self.sparse_reward_radius:
+                #     return 0
+                # dists = [np.linalg.norm(obs_next - corner[None, :], axis=1) for corner in self.corners]
+                # if np.min(goal_distance) == min(dists):
+                #     return np.linalg.norm(obs - self._goal[None,:], axis=1)[0] - goal_distance
+                # return 0
 
         elif obs_next.ndim == 1:
             return self.reward(np.array([obs]), np.array([act]), np.array([obs_next]))

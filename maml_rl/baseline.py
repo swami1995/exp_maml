@@ -30,11 +30,13 @@ class LinearFeatureBaseline(nn.Module):
         return torch.cat([observations, observations ** 2,
             al, al ** 2, al ** 3, ones], dim=2)
 
-    def fit(self, episodes):
+    def fit(self, episodes, returns=None):
         # sequence_length * batch_size x feature_size
         featmat = self._feature(episodes).view(-1, self.feature_size)
         # sequence_length * batch_size x 1
-        returns = episodes.returns.view(-1, 1)
+        if returns is None:
+            returns = episodes.returns
+        returns = returns.view(-1, 1)
 
         reg_coeff = self._reg_coeff
         eye = torch.eye(self.feature_size, dtype=torch.float32,
