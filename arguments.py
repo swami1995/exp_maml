@@ -19,7 +19,7 @@ def get_args():
     # Policy network (relu activation function)
     parser.add_argument('--hidden-size', type=int, default=100,
         help='number of hidden units per layer')
-    parser.add_argument('--embed-size', type=int, default=100,
+    parser.add_argument('--embed-size', type=int, default=4,
         help='number of hidden units per layer')
     parser.add_argument('--num-layers-pre', type=int, default=2,
         help='number of hidden layers-pre')
