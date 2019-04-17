@@ -339,7 +339,8 @@ class MetaLearner(object):
         self.exp_optimizer.zero_grad()
         self.iter+=1
         wts = math.exp(-self.iter/5)
-        dice_grad = torch.autograd.grad(old_loss#+wts1*reward_loss 
+        wts1 = 1
+        dice_grad = torch.autograd.grad(old_loss#+wts*reward_loss 
             ,self.dice_wts_detached,retain_graph=True)
         dice_wts_grad = []
         # ipdb.set_trace()
@@ -366,7 +367,7 @@ class MetaLearner(object):
         dice_grad_mean*=scale.detach().item()
         dice_grad_mean.sum().backward()
 
-        (old_loss+wts*reward_loss).backward()
+        (old_loss+wts1*reward_loss).backward()
         nn.utils.clip_grad_norm_(self.policy.parameters(),self.clip)
         nn.utils.clip_grad_norm_(self.reward_net.parameters(),self.clip)
         nn.utils.clip_grad_norm_([self.z_old],self.clip)
