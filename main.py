@@ -25,14 +25,22 @@ def total_rewards(episodes_rewards, aggregation=torch.mean):
 
 def plotting(episodes, batch, save_folder, n):
     for i in range(n):
-        train_ep = episodes[i][0]
+        train_ep = [episodes[i][0]]
         val_ep = episodes[i][1]
         task = episodes[i][0].task
-        train_obs = train_ep.observations[:,0].cpu().numpy()
         val_obs = val_ep.observations[:,0].cpu().numpy()
         corners = np.array([np.array([-2,-2]), np.array([2,-2]), np.array([-2,2]), np.array([2, 2])])
-        plt.plot(train_obs[:,0], train_obs[:,1], 'b', label='exploring agent')
-        plt.plot(val_obs[:,0], val_obs[:,1], 'k', label='trained agent')
+        # cmap = cm.get_cmap('PiYG', len(train_ep)+1)
+        for j in range(len(train_ep)):
+            for k in range(5):
+                train_obs = train_ep[j].observations[:,k].cpu().numpy()
+                train_obs = np.maximum(train_obs, -4)
+                train_obs = np.minimum(train_obs, 4)
+                plt.plot(train_obs[:,0], train_obs[:,1], label='exploring agent'+str(j)+str(k))
+        val_obs = np.maximum(val_obs, -4)
+        val_obs = np.minimum(val_obs, 4)
+        plt.plot(val_obs[:,0], val_obs[:,1], label='trained agent')
+        plt.legend()
         plt.scatter(corners[:,0], corners[:,1], s=10, color='g')
         plt.scatter(task[None,0], task[None,1], s=10, color='r')
         plt.savefig(os.path.join(save_folder,'plot-{0}-{1}.png'.format(batch,i)))
@@ -45,7 +53,7 @@ def main(args):
         'AntPos-v0', 'HalfCheetahVel-v1', 'HalfCheetahDir-v1',
         '2DNavigation-v0', '2DPointEnvCorner-v0'])
 
-    save_folder = os.path.join(args.savedir, args.env.name, args.output_folder)
+    save_folder = os.path.join(args.savedir, args.env_name, args.output_folder)
     # save_folder = './saves/{0}'.format(args.env_name+'/'+args.output_folder)
     if args.output_folder!='maml-trial' and args.output_folder!='trial':
         # i=0
@@ -108,6 +116,12 @@ def main(args):
         args.embed_size,
         hidden_sizes_pre_embedding=(args.hidden_size,) * args.num_layers_pre,
         hidden_sizes_post_embedding=(args.hidden_size,) * args.num_layers_post)
+    reward_net_outer = RewardNetMLP(
+        int(np.prod(sampler.envs.observation_space.shape)),
+        sampler.envs.action_space.shape[0],
+        args.embed_size,
+        hidden_sizes_pre_embedding=(args.hidden_size,) * args.num_layers_pre,
+        hidden_sizes_post_embedding=(args.hidden_size,) * args.num_layers_post)
 
     baseline = LinearFeatureBaseline(
         int(np.prod(sampler.envs.observation_space.shape)))
@@ -121,15 +135,17 @@ def main(args):
         policy.load_state_dict(torch.load(load_folder+'policy-{0}.pt'.format(folder_idx[1])))
         exp_policy.load_state_dict(torch.load(load_folder+'policy-{0}-exp.pt'.format(folder_idx[1])))
         reward_net.load_state_dict(torch.load(load_folder+'reward-{0}.pt'.format(folder_idx[1])))
+        metalearner.z_old.copy_(torch.load(load_folder+'z_old-{0}.pt'.format(folder_idx[1]))['z_old'])
+        reward_net_outer.load_state_dict(torch.load(load_folder+'reward_outer-{0}.pt'.format(folder_idx[1])))
 
-    metalearner = MetaLearner(sampler, policy, exp_policy, baseline, exp_baseline, reward_net, embed_size=args.embed_size, gamma=args.gamma,
+    metalearner = MetaLearner(sampler, policy, exp_policy, baseline, exp_baseline, reward_net, reward_net_outer, embed_size=args.embed_size, gamma=args.gamma,
         fast_lr=args.fast_lr, tau=args.tau, lr=args.exp_lr, eps=args.exp_eps, device=args.device)
 
     best_reward_after=-400
     for batch in range(args.num_batches):
         tasks = sampler.sample_tasks(num_tasks=args.meta_batch_size)
         episodes = metalearner.sample(tasks, first_order=args.first_order)
-        r_loss, pg_loss = metalearner.step(episodes, max_kl=args.max_kl, cg_iters=args.cg_iters,
+        r_loss, pg_loss, grad_vals = metalearner.step(episodes, max_kl=args.max_kl, cg_iters=args.cg_iters,
             cg_damping=args.cg_damping, ls_max_steps=args.ls_max_steps,
             ls_backtrack_ratio=args.ls_backtrack_ratio)
 
@@ -144,13 +160,20 @@ def main(args):
             sys.exit(0)
             
         # Tensorboard
-        writer.add_scalar('total_rewards/before_update',
-            total_rewards([ep.rewards for ep, _ in episodes]), batch)
+        for i in range(args.num_updates):
+            writer.add_scalar('total_rewards/before_update_'+str(i),
+                total_rewards([ep.rewards for ep, _ in episodes]), batch)
         writer.add_scalar('total_rewards/after_update',
             total_rewards([ep.rewards for _, ep in episodes]), batch)
-        writer.add_scalar('reward_loss/before_update', r_loss[0], batch)
+        for i in range(args.num_updates):
+            writer.add_scalar('reward_loss/before_update_'+str(i), r_loss[0], batch)
         writer.add_scalar('reward_loss/after_update', r_loss[1], batch)
         writer.add_scalar('pg_loss/after_update', pg_loss, batch)
+        writer.add_scalar('grad_vals/z', grad_vals[0], batch)  
+        writer.add_scalar('grad_vals/policy', grad_vals[1], batch)  
+        writer.add_scalar('grad_vals/exp_policy', grad_vals[2], batch)  
+        writer.add_scalar('grad_vals/reward_net', grad_vals[3], batch)  
+        writer.add_scalar('grad_vals/reward_net_outer', grad_vals[4], batch)  
 
         # Save policy network
         if batch%args.save_every==0 or reward_after > best_reward_after:
@@ -163,9 +186,17 @@ def main(args):
             with open(os.path.join(save_folder,
                     'reward-{0}.pt'.format(batch)), 'wb') as f:
                 torch.save(reward_net.state_dict(), f)
+            with open(os.path.join(save_folder,
+                    'reward_outer-{0}.pt'.format(batch)), 'wb') as f:
+                torch.save(reward_net_outer.state_dict(), f)
+            with open(os.path.join(save_folder,
+                    'z_old-{0}.pt'.format(batch)), 'wb') as f:
+                torch.save({'z_old':metalearner.z_old}, f)
+
             best_reward_after = reward_after
             # Plotting figure
-            plotting(episodes, batch, save_folder, args.num_plots)
+            if args.env_name in ['2DNavigation-v0', '2DPointEnvCorner-v0']:
+                plotting(episodes, batch, save_folder, args.num_plots)
 
 
 if __name__ == '__main__':

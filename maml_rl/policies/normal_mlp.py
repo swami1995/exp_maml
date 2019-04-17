@@ -26,12 +26,13 @@ class NormalMLPPolicy(Policy):
         self.num_layers_post = len(hidden_sizes_post_embedding)
         self.min_log_std = math.log(min_std)
 
-        layer_sizes = (self.input_size,) + hidden_sizes_pre_embedding
+        layer_sizes = (self.input_size+self.embedding_size,) + hidden_sizes_pre_embedding
         for i in range(1, self.num_layers_pre+1):
             self.add_module('layer_pre{0}'.format(i),
                 nn.Linear(layer_sizes[i - 1], layer_sizes[i]))
         
-        layer_sizes = (hidden_sizes_pre_embedding[-1]+self.embedding_size,) + hidden_sizes_post_embedding
+        layer_sizes = ((hidden_sizes_pre_embedding[-1],)#+self.embedding_size,)
+                         + hidden_sizes_post_embedding)
         for i in range(1, self.num_layers_post+1):
             self.add_module('layer_post{0}'.format(i+self.num_layers_pre),
                 nn.Linear(layer_sizes[i - 1], layer_sizes[i]))
@@ -45,6 +46,7 @@ class NormalMLPPolicy(Policy):
     def forward(self, input, z, params=None):
         batch_shape = input.shape[:-1]
         input = input.reshape((-1,input.shape[-1]))
+        input=torch.cat([input,z.repeat(input.shape[0],1)], dim=-1)
         if params is None:
             params = OrderedDict(self.named_parameters())
         output = input
@@ -54,7 +56,7 @@ class NormalMLPPolicy(Policy):
                 bias=params['layer_pre{0}.bias'.format(i)])
             output = self.nonlinearity(output)
 
-        output = torch.cat([output,z.repeat(output.shape[0],1)], dim=-1)
+        # output = torch.cat([output,z.repeat(output.shape[0],1)], dim=-1)
         for i in range(1, self.num_layers_post+1):
             output = F.linear(output,
                 weight=params['layer_post{0}.weight'.format(i+self.num_layers_pre)],

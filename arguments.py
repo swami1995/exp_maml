@@ -61,7 +61,10 @@ def get_args():
         help='number of plots to save per iteration')
     parser.add_argument('--num-workers', type=int, default=mp.cpu_count() - 1,
         help='number of workers for trajectories sampling')
-    
+    parser.add_argument('--device', type=str, default='cuda',
+        help='device type')
+    parser.add_argument('--num-updates', type=int, default=1,
+        help='number of gradient steps to be taken')
     # logging
     parser.add_argument('--logdir', default='logs')
     parser.add_argument('--savedir', default='saves')
