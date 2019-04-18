@@ -98,11 +98,11 @@ class MetaLearner(object):
             # TODO: This might be high variance so reconsider it later maybe.
             dice_wts = torch.exp(exp_log_probs_diff.sum(dim=2) - exp_log_probs_diff.sum(dim=2).detach())  
             self.dice_wts.append(dice_wts)
-            # cum_wts = torch.exp(torch.log(self.dice_wts[-1]).cumsum(dim=0))
-            # loss *= cum_wts
             self.dice_wts_detached.append(dice_wts.detach())
             self.dice_wts_detached[-1].requires_grad_()
-            loss *= self.dice_wts_detached[-1]
+            cum_wts = torch.exp(torch.log(self.dice_wts_detached[-1]).cumsum(dim=0))
+            # loss *= self.dice_wts_detached[-1]
+            loss *= cum_wts
 
         if self.check:
             self.check=False
