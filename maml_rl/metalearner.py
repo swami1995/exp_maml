@@ -1,5 +1,6 @@
 import ipdb
 import torch
+import torch.nn as nn
 from torch.nn.utils.convert_parameters import (vector_to_parameters,
                                                parameters_to_vector)
 from torch.distributions.kl import kl_divergence
@@ -7,6 +8,7 @@ from torch.distributions.kl import kl_divergence
 from maml_rl.utils.torch_utils import (weighted_mean, detach_distribution,
                                        weighted_normalize)
 from maml_rl.utils.optimization import conjugate_gradient
+import torch.optim as optim
 
 class MetaLearner(object):
     """Meta-learner
@@ -27,7 +29,7 @@ class MetaLearner(object):
         Pieter Abbeel, "Trust Region Policy Optimization", 2015
         (https://arxiv.org/abs/1502.05477)
     """
-    def __init__(self, sampler, policy, baseline, gamma=0.95,
+    def __init__(self, sampler, policy, baseline, args, gamma=0.95,
                  fast_lr=0.5, tau=1.0, device='cpu'):
         self.sampler = sampler
         self.policy = policy
@@ -35,7 +37,9 @@ class MetaLearner(object):
         self.gamma = gamma
         self.fast_lr = fast_lr
         self.tau = tau
+        self.args = args
         self.to(device)
+        self.policy_optimizer = optim.Adam(self.policy.parameters(), lr=self.args.lr, eps=self.args.eps)
 
     def inner_loss(self, episodes, params=None):
         """Compute the inner loss for the one-step gradient update. The inner 
@@ -167,6 +171,19 @@ class MetaLearner(object):
         on Trust Region Policy Optimization (TRPO, [4]).
         """
         old_loss, _, old_pis = self.surrogate_loss(episodes)
+        if self.args.vpg_flag:
+            self.vpg(episodes, old_loss, old_pis)
+        else:
+            self.Conjugate_gradient_descent(episodes, old_loss, old_pis, max_kl, cg_iters, 
+            cg_damping, ls_max_steps, ls_backtrack_ratio)
+
+    def vpg(self, episodes, old_loss, old_pis):
+        self.policy_optimizer.zero_grad()
+        old_loss.backward()
+        nn.utils.clip_grad_norm_(self.policy.parameters(),0.5)
+        self.policy_optimizer.step()
+    def Conjugate_gradient_descent(self, episodes, old_loss, old_pis, max_kl=1e-3, cg_iters=10, 
+        cg_damping=1e-2, ls_max_steps=10, ls_backtrack_ratio=0.5):
         grads = torch.autograd.grad(old_loss, self.policy.parameters())
         grads = parameters_to_vector(grads)
 

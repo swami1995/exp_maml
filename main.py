@@ -78,7 +78,7 @@ def main(args):
     if args.load_dir is not None:
         policy.load_state_dict(torch.load(args.load_dir))
 
-    metalearner = MetaLearner(sampler, policy, baseline, gamma=args.gamma,
+    metalearner = MetaLearner(sampler, policy, baseline, args, gamma=args.gamma,
         fast_lr=args.fast_lr, tau=args.tau, device=args.device)
 
     for batch in range(args.num_batches):
@@ -92,7 +92,7 @@ def main(args):
         print('total_rewards/after_update', total_rewards([ep.rewards for _, ep in episodes]), batch)
         
         # Plotting figure
-        plotting(episodes, batch, save_folder,args.num_plots)
+        # plotting(episodes, batch, save_folder,args.num_plots)
 
         if args.load_dir is not None:
             sys.exit(0)
@@ -166,6 +166,12 @@ if __name__ == '__main__':
         help='number of workers for trajectories sampling')
     parser.add_argument('--device', type=str, default='cpu',
         help='set the device (cpu or cuda)')
+    parser.add_argument('--lr', type=float, default=7e-4,
+        help='learning rate for exploration network')
+    parser.add_argument('--eps', type=float, default=1e-5,
+        help='epsilon for exploration network optimizer')
+    parser.add_argument('--vpg-flag', action='store_true',
+        help='flag to perform vpg')
 
     args = parser.parse_args()
 
