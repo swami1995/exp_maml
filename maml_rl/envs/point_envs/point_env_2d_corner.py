@@ -10,7 +10,7 @@ class MetaPointEnvCorner(gym.Env):
     (one of the 4 points (-2,-2), (-2, 2), (2, -2), (2,2)) which are sampled with equal probability
     """
 
-    def __init__(self, reward_type='dense', sparse_reward_radius=0.5, task = {}):
+    def __init__(self, reward_type='sparse', sparse_reward_radius=2, task = {}):
         super(MetaPointEnvCorner,self).__init__()
 
         assert reward_type in ['dense', 'dense_squared', 'sparse']

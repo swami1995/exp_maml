@@ -1,4 +1,4 @@
-from meta_policy_search.envs.base import MetaEnv
+from maml_rl.envs.base import MetaEnv
 
 import numpy as np
 from gym.spaces import Box
@@ -16,8 +16,8 @@ class MetaPointEnvMomentum(MetaEnv):
         print("Point Env reward type is", reward_type)
         self.sparse_reward_radius = sparse_reward_radius
         self.corners = [np.array([-2,-2]), np.array([2,-2]), np.array([-2,2]), np.array([2, 2])]
-        self.observation_space = Box(low=-np.inf, high=np.inf, shape=(4,))
-        self.action_space = Box(low=-0.1, high=0.1, shape=(2,))
+        self.observation_space = Box(low=-np.inf, high=np.inf, shape=(4,), dtype=np.float32)
+        self.action_space = Box(low=-0.1, high=0.1, shape=(2,), dtype=np.float32)
 
     def step(self, action):
         """
@@ -35,7 +35,7 @@ class MetaPointEnvMomentum(MetaEnv):
         """
         prev_state = self._state
         self._velocity += np.clip(action, -0.1, 0.1)
-        self._state = prev_state + self._velocity
+        self._state = np.clip(prev_state + self._velocity, -4, 4)
         reward = self.reward(prev_state, action, self._state)
         done = False # self.done(self._state)
         next_observation = np.hstack((self._state, self._velocity))
@@ -86,6 +86,9 @@ class MetaPointEnvMomentum(MetaEnv):
 
     def get_task(self):
         return self.goal
+
+    def reset_task(self, task):
+        self.goal = task
 
 if __name__ == "__main__":
     env = MetaPointEnvMomentum()

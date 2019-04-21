@@ -51,7 +51,7 @@ def plotting(episodes, batch, save_folder, n):
 def main(args):
     continuous_actions = (args.env_name in ['AntVel-v1', 'AntDir-v1',
         'AntPos-v0', 'HalfCheetahVel-v1', 'HalfCheetahDir-v1',
-        '2DNavigation-v0', '2DPointEnvCorner-v0'])
+        '2DNavigation-v0', '2DPointEnvCorner-v0', '2DPointEnvCorner-v1'])
 
     save_folder = os.path.join(args.savedir, args.env_name, args.output_folder)
     # save_folder = './saves/{0}'.format(args.env_name+'/'+args.output_folder)
@@ -195,7 +195,7 @@ def main(args):
 
             best_reward_after = reward_after
             # Plotting figure
-            if args.env_name in ['2DNavigation-v0', '2DPointEnvCorner-v0']:
+            if args.env_name in ['2DNavigation-v0', '2DPointEnvCorner-v0', '2DPointEnvCorner-v1']:
                 plotting(episodes, batch, save_folder, args.num_plots)
 
 
