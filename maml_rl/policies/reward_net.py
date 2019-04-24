@@ -18,7 +18,8 @@ class RewardNetMLP(nn.Module):
         super(RewardNetMLP, self).__init__()
         self.state_size = state_size
         self.action_size = action_size
-        self.input_size = state_size+action_size+embedding_size                        ### NOTE: Needs to be changed for different kinds of inputs
+        # NOTE: Needs to be changed for different kinds of inputs
+        self.input_size = state_size+action_size+embedding_size                        
         self.embedding_size = embedding_size
         self.output_size = output_size
 
@@ -69,7 +70,6 @@ class RewardNetMLP(nn.Module):
                 bias=params['layer_pre{0}.bias'.format(i)])
             output = self.nonlinearity(output)
 
-        # pdb.set_trace()
         # new_z = z.unsqueeze(0).repeat(output.shape[0],output.shape[1],1)
         # output = torch.cat([output,new_z], dim=-1)
         for i in range(1, self.num_layers_post):

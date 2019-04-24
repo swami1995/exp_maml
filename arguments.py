@@ -7,7 +7,7 @@ def get_args():
         'Model-Agnostic Meta-Learning (MAML)')
 
     # General
-    parser.add_argument('--env-name', type=str,
+    parser.add_argument('--env-name', type=str, default='2DPointEnvCorner-v0',
         help='name of the environment')
     parser.add_argument('--gamma', type=float, default=0.95,
         help='value of the discount factor gamma')
@@ -65,10 +65,12 @@ def get_args():
         help='device type')
     parser.add_argument('--num-updates', type=int, default=1,
         help='number of gradient steps to be taken')
+    
     # logging
     parser.add_argument('--logdir', default='logs')
     parser.add_argument('--savedir', default='saves')
     parser.add_argument('--save-every', default=20, type=int)
+    parser.add_argument('--test', action='store_true', help='do not log anything')
 
     args = parser.parse_args()
 
