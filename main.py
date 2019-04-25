@@ -5,7 +5,6 @@ import torch
 import json
 import os
 import sys
-import matplotlib.pyplot as plt
 
 from maml_rl.metalearner import MetaLearner
 from maml_rl.policies import CategoricalMLPPolicy, NormalMLPPolicy, RewardNetMLP
@@ -15,37 +14,13 @@ from maml_rl.envs.point_envs.point_env_2d_corner import MetaPointEnvCorner
 
 from tensorboardX import SummaryWriter
 from arguments import get_args
+from utils import plotting
 
 
 def total_rewards(episodes_rewards, aggregation=torch.mean):
     rewards = torch.mean(torch.stack([aggregation(torch.sum(rewards, dim=0))
         for rewards in episodes_rewards], dim=0))
     return rewards.item()
-
-
-def plotting(episodes, batch, save_folder, n):
-    for i in range(n):
-        train_ep = [episodes[i][0]]
-        val_ep = episodes[i][1]
-        task = episodes[i][0].task
-        val_obs = val_ep.observations[:,0].cpu().numpy()
-        corners = np.array([np.array([-2,-2]), np.array([2,-2]), np.array([-2,2]), np.array([2, 2])])
-        # cmap = cm.get_cmap('PiYG', len(train_ep)+1)
-        for j in range(len(train_ep)):
-            for k in range(5):
-                train_obs = train_ep[j].observations[:,k].cpu().numpy()
-                train_obs = np.maximum(train_obs, -4)
-                train_obs = np.minimum(train_obs, 4)
-                plt.plot(train_obs[:,0], train_obs[:,1], label='exploring agent'+str(j)+str(k))
-        val_obs = np.maximum(val_obs, -4)
-        val_obs = np.minimum(val_obs, 4)
-        plt.plot(val_obs[:,0], val_obs[:,1], label='trained agent')
-        plt.legend()
-        plt.scatter(corners[:,0], corners[:,1], s=10, color='g')
-        plt.scatter(task[None,0], task[None,1], s=10, color='r')
-        plt.savefig(os.path.join(save_folder,'plot-{0}-{1}.png'.format(batch,i)))
-        plt.clf()
-    return None
 
 
 def main(args):
@@ -56,14 +31,7 @@ def main(args):
     # do not save anything
     if not args.test:
         save_folder = os.path.join(args.savedir, args.env_name, args.output_folder)
-        # save_folder = './saves/{0}'.format(args.env_name+'/'+args.output_folder)
         if args.output_folder!='maml-trial' and args.output_folder!='trial':
-            # i=0
-            # while os.path.exists(save_folder):
-            #     args.output_folder=str(i+1)
-            #     i+=1
-            #     save_folder = './saves/{0}'.format(args.env_name+'/'+args.output_folder)
-            # log_directory = './logs/{0}'.format(args.env_name+'/'+args.output_folder)
             if not os.path.exists(save_folder):
                 os.makedirs(save_folder)
         logdir = os.path.join(args.logdir, args.env_name, args.output_folder)
@@ -80,8 +48,8 @@ def main(args):
         os.system("cp -r maml_rl "+save_folder+'/code/')
         print("Models saved in :", save_folder)
 
-    sampler = BatchSampler(args.env_name, batch_size=args.fast_batch_size,
-        num_workers=args.num_workers)
+    sampler = BatchSampler(args.env_name, batch_size=args.fast_batch_size, num_workers=args.num_workers)
+    
     if continuous_actions:
         policy = NormalMLPPolicy(
             int(np.prod(sampler.envs.observation_space.shape)),
@@ -96,6 +64,7 @@ def main(args):
             args.embed_size,
             hidden_sizes_pre_embedding=(args.hidden_size,) * args.num_layers_pre,
             hidden_sizes_post_embedding=(args.hidden_size,) * args.num_layers_post)
+    
     else:
         policy = CategoricalMLPPolicy(
             int(np.prod(sampler.envs.observation_space.shape)),
@@ -125,11 +94,8 @@ def main(args):
         hidden_sizes_pre_embedding=(args.hidden_size,) * args.num_layers_pre,
         hidden_sizes_post_embedding=(args.hidden_size,) * args.num_layers_post)
 
-    baseline = LinearFeatureBaseline(
-        int(np.prod(sampler.envs.observation_space.shape)))
-
-    exp_baseline = LinearFeatureBaseline(
-        int(np.prod(sampler.envs.observation_space.shape)))
+    baseline = LinearFeatureBaseline(int(np.prod(sampler.envs.observation_space.shape)))
+    exp_baseline = LinearFeatureBaseline(int(np.prod(sampler.envs.observation_space.shape)))
 
     metalearner = MetaLearner(sampler, policy, exp_policy, baseline, exp_baseline, reward_net, reward_net_outer, 
                               embed_size=args.embed_size, gamma=args.gamma, fast_lr=args.fast_lr, tau=args.tau,
@@ -149,8 +115,8 @@ def main(args):
         tasks = sampler.sample_tasks(num_tasks=args.meta_batch_size)
         episodes = metalearner.sample(tasks, first_order=args.first_order)
         r_loss, pg_loss, grad_vals = metalearner.step(episodes, max_kl=args.max_kl, cg_iters=args.cg_iters,
-            cg_damping=args.cg_damping, ls_max_steps=args.ls_max_steps,
-            ls_backtrack_ratio=args.ls_backtrack_ratio)
+                                                      cg_damping=args.cg_damping, ls_max_steps=args.ls_max_steps,
+                                                      ls_backtrack_ratio=args.ls_backtrack_ratio)
 
         reward_after = total_rewards([ep.rewards for _, ep in episodes])
         print('Batch {:d}/{:d}'.format(batch+1, args.num_batches))

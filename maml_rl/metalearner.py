@@ -75,20 +75,17 @@ class MetaLearner(object):
         self.dice_wts_detached = []
         self.exp_entropy = []
 
+    def compute_reward_loss(self, rewards, rewards_pred):
+        # TODO: smooth l1 loss ? 
+        return (rewards - rewards_pred)**2
+
     def inner_loss(self, episodes, exp_update='dice', params=None):
-        """Compute the inner loss for the one-step gradient update. The inner 
-        loss is REINFORCE with baseline [2], computed on advantages estimated 
-        with Generalized Advantage Estimation (GAE, [3]).
-        """
+        # inner loop update 
         states, actions, rewards = episodes.observations, episodes.actions, episodes.rewards
         rewards_pred = self.reward_net(states,actions,self.z).squeeze()
-        # TODO: smooth l1 loss ? 
-        loss = (rewards - rewards_pred)**2
+        loss = self.compute_reward_loss(rewards, rewards_pred)
         
         exp_pi = self.exp_policy(states, self.z.detach())
-        # TODO: not being used anywhere? 
-        exp_log_probs_non_diff = episodes.action_probs
-        exp_log_probs_diff = torch.zeros_like(exp_log_probs_non_diff)
         self.exp_entropy.append(exp_pi.entropy().sum(dim=2))
 
         # Think of better objectives (predicting the reward function, hypothesis testing etc. which are denser)
@@ -102,12 +99,11 @@ class MetaLearner(object):
             exp_log_probs_diff = exp_pi.log_prob(episodes.actions)
 
             # TODO: This might be high variance so reconsider it later maybe.
-            dice_wts = torch.exp(exp_log_probs_diff.sum(dim=2) - exp_log_probs_diff.sum(dim=2).detach())  
-            self.dice_wts.append(dice_wts)
+            dice_wt = torch.exp(exp_log_probs_diff.sum(dim=2) - exp_log_probs_diff.sum(dim=2).detach())  
+            self.dice_wts.append(dice_wt)
             # cum_wts = torch.exp(torch.log(self.dice_wts[-1]).cumsum(dim=0))
             # loss *= cum_wts
-            self.dice_wts_detached.append(dice_wts.detach())
-            # TODO: why is this needed? 
+            self.dice_wts_detached.append(dice_wt.detach())
             self.dice_wts_detached[-1].requires_grad_()
             loss *= self.dice_wts_detached[-1]
 
@@ -117,7 +113,7 @@ class MetaLearner(object):
         #     exp_log_probs_non_diff = torch.sum(exp_log_probs_non_diff, dim=2)
 
         # TODO: Do we need importance sampling?
-        wts = episodes.mask     
+        wts = episodes.mask
         loss = weighted_mean(loss, dim=0, weights=wts)
         loss = loss.mean()
         return loss
@@ -187,20 +183,183 @@ class MetaLearner(object):
 
         return torch.mean(torch.stack(kls, dim=0))
 
-    def hessian_vector_product(self, episodes, damping=1e-2):
-        """Hessian-vector product, based on the Perlmutter method."""
-        def _product(vector):
-            kl = self.kl_divergence(episodes)
-            grads = torch.autograd.grad(kl, self.policy.parameters(),
-                create_graph=True)
-            flat_grad_kl = parameters_to_vector(grads)
+    def surrogate_loss_rewardnet(self, episodes, old_pis=None, exp_update='dice'):
+        losses, kls, pis, reward_losses, reward_losses_before = [], [], [], [], []
+        assert old_pis is None, 'old pis should be None'
+        old_pis = [None] * len(episodes)
 
-            grad_kl_v = torch.dot(flat_grad_kl, vector)
-            grad2s = torch.autograd.grad(grad_kl_v, self.policy.parameters())
-            flat_grad2_kl = parameters_to_vector(grad2s)
+        self.dice_wts = []
+        self.dice_wts_detached = []
+        self.exp_entropy = []
+        for (train_episodes, valid_episodes), old_pi in zip(episodes, old_pis):
+            curr_params, updated_params, _ = self.adapt(train_episodes)
+            self.baseline.fit(valid_episodes)
 
-            return flat_grad2_kl + damping * vector
-        return _product
+            with torch.no_grad():
+                states, actions, rewards = valid_episodes.observations, valid_episodes.actions, valid_episodes.rewards
+                rewards_pred = self.reward_net_outer(states, actions, curr_params['z']).squeeze()
+                reward_loss = self.compute_reward_loss(rewards, rewards_pred)
+                reward_losses_before.append(reward_loss.mean())
+
+            # Reward Objective
+            rewards_pred = self.reward_net_outer(states, actions, updated_params['z'].detach()).squeeze()
+            reward_loss = self.compute_reward_loss(rewards, rewards_pred)
+            reward_losses.append(reward_loss.mean())
+
+            # Policy Objective
+            pi = self.policy(valid_episodes.observations, updated_params['z'])
+            pis.append(detach_distribution(pi))
+            old_pi = detach_distribution(pi)
+            
+            log_ratio = pi.log_prob(valid_episodes.actions) - old_pi.log_prob(valid_episodes.actions)
+            if log_ratio.dim() > 2:
+                log_ratio = torch.sum(log_ratio, dim=2)
+            ratio = torch.exp(log_ratio)
+
+            values = self.baseline(valid_episodes)
+            advantages = valid_episodes.gae(values, tau=self.tau)
+            advantages = weighted_normalize(advantages, weights=valid_episodes.mask)
+            
+            loss = -weighted_mean(ratio * advantages, dim=0, weights=valid_episodes.mask)
+            losses.append(loss)
+
+            # not being used 
+            mask = valid_episodes.mask
+            if valid_episodes.actions.dim() > 2:
+                mask = mask.unsqueeze(2)
+            kl = weighted_mean(kl_divergence(pi, old_pi), dim=0, weights=mask)
+            kls.append(kl)
+
+        return (torch.mean(torch.stack(losses, dim=0)),
+                torch.mean(torch.stack(kls, dim=0)), 
+                torch.mean(torch.stack(reward_losses,dim=0)),
+                torch.mean(torch.stack(reward_losses_before,dim=0)), 
+                pis
+                )
+
+    def step(self, episodes, max_kl=1e-3, cg_iters=10, cg_damping=1e-2,
+             ls_max_steps=10, ls_backtrack_ratio=0.5):
+        """Meta-optimization step (ie. update of the initial parameters), based 
+        on Trust Region Policy Optimization (TRPO, [4]).
+        """
+        old_loss, _, reward_loss_after, reward_loss_before, old_pis = self.surrogate_loss_rewardnet(episodes,
+                                                                                     exp_update='dice')
+
+        # reward_loss_after, reward_loss_before= self.test_func(episodes)
+        
+        grad_vals = self.gradient_descent_update(old_loss*10, reward_loss_after*1, episodes)
+        return ((reward_loss_before, reward_loss_after)), old_loss, grad_vals
+
+    def gradient_descent_update(self, old_loss, reward_loss, episodes):
+        self.z_optimizer.zero_grad()
+        self.reward_optimizer.zero_grad()
+        self.policy_optimizer.zero_grad()
+        self.exp_optimizer.zero_grad()
+        self.reward_outer_optimizer.zero_grad()
+
+        self.iter += 1
+        # why 5 ? 
+        wts = math.exp(-self.iter/5)
+        dice_grad = torch.autograd.grad(old_loss, self.dice_wts_detached, retain_graph=True)
+        dice_wts_grad = []
+
+        for i, (train_episodes, valid_episodes) in enumerate(episodes):
+            dice_grad_normalized = weighted_normalize(dice_grad[i]).detach()
+            returns = - dice_grad_normalized 
+
+            self.exp_baseline.fit(train_episodes, returns)
+            values = self.exp_baseline(train_episodes)
+            
+            advantages = returns - values.squeeze()
+            ratio = self.dice_wts[i]
+            action_loss = -ratio*advantages
+            dice_wts_grad.append(action_loss)
+
+        dice_grad_mean = 0
+        for i in range(len(self.dice_wts)):
+            dice_grad_mean += dice_wts_grad[i].sum() 
+            
+        scale = torch.sum(torch.tensor([dice_grad[i].sum() for i in range(len(dice_grad))]))/dice_grad_mean.sum().item()
+        dice_grad_mean*=scale.detach().item()
+        dice_grad_mean.sum().backward()
+
+        (old_loss+wts*reward_loss).backward()
+        nn.utils.clip_grad_norm_(self.policy.parameters(),self.clip)
+        nn.utils.clip_grad_norm_(self.reward_net.parameters(),self.clip)
+        nn.utils.clip_grad_norm_([self.z_old],self.clip)
+        nn.utils.clip_grad_norm_(self.exp_policy.parameters(),self.clip)
+        nn.utils.clip_grad_norm_(self.reward_net_outer.parameters(),self.clip)
+
+        grad_vals = [self.z_old.grad.abs().mean().item(), 
+                     self.policy.layer_pre1.weight.grad.abs().mean().item(),
+                     self.exp_policy.layer_pre1.weight.grad.abs().mean().item(),
+                     self.reward_net.layer_pre1.weight.grad.abs().mean().item(),
+                     self.reward_net_outer.layer_pre1.weight.grad.abs().mean().item()]
+        print("z_grad {:.9f}".format(grad_vals[0]))
+        print("policy_grad {:.9f}".format(grad_vals[1]))
+        print("exp_policy_grad {:.9f}".format(grad_vals[2]))
+        print("reward_grad {:.9f}".format(grad_vals[3]))
+        print("reward_grad_outer {:.9f}".format(grad_vals[4]))
+        self.z_optimizer.step()
+        self.reward_optimizer.step()
+        self.reward_outer_optimizer.step()
+        self.policy_optimizer.step()
+        self.exp_optimizer.step()
+        return grad_vals
+
+    def to(self, device, **kwargs):
+        self.policy.to(device, **kwargs)
+        self.baseline.to(device, **kwargs)
+        self.exp_policy.to(device, **kwargs)
+        self.exp_baseline.to(device, **kwargs)
+        self.reward_net.to(device, **kwargs)
+        self.reward_net_outer.to(device, **kwargs)
+        self.z = self.z_old.to(device, **kwargs)
+        self.device = device
+
+    # def update_exp_policy_dice(self,old_loss, grads):
+    #     self.exp_optimizer.zero_grad()
+    #     for param, gradient in zip(self.exp_policy.parameters(),grads):
+    #         param.grad = gradient
+    #     self.exp_optimizer.step()
+
+    # def get_returns(self, rewards):
+    #     return_ = torch.zeros(rewards.shape[1]).to(self.device)
+    #     returns = torch.zeros(rewards.shape[:2]).to(self.device)
+    #     for i in range(len(rewards) - 1, -1, -1):
+    #         return_ = self.gamma * return_ + rewards[i].detach()
+    #         returns[i] = return_
+    #     return returns
+
+    # def gae(self, values, rewards, tau=1.0):
+    #     values = values.squeeze(2).detach()
+    #     # Add an additional 0 at the end of values for the estimation at the end of the episode
+    #     values = F.pad(values, (0, 0, 0, 1))
+
+    #     deltas = rewards + self.gamma * values[1:] - values[:-1]
+    #     advantages = torch.zeros_like(deltas).float()
+    #     gae = torch.zeros_like(deltas[0]).float()
+    #     for i in range(len(rewards) - 1, -1, -1):
+    #         gae = gae * self.gamma * tau + deltas[i]
+    #         advantages[i] = gae
+    #     returns = values[:-1] + advantages
+    #     return advantages, returns
+
+
+    # def hessian_vector_product(self, episodes, damping=1e-2):
+    #     """Hessian-vector product, based on the Perlmutter method."""
+    #     def _product(vector):
+    #         kl = self.kl_divergence(episodes)
+    #         grads = torch.autograd.grad(kl, self.policy.parameters(),
+    #             create_graph=True)
+    #         flat_grad_kl = parameters_to_vector(grads)
+
+    #         grad_kl_v = torch.dot(flat_grad_kl, vector)
+    #         grad2s = torch.autograd.grad(grad_kl_v, self.policy.parameters())
+    #         flat_grad2_kl = parameters_to_vector(grad2s)
+
+    #         return flat_grad2_kl + damping * vector
+    #     return _product
 
     # def surrogate_loss(self, episodes, old_pis=None, exp_update='dice'):
     #     losses, kls, pis = [], [], []
@@ -238,184 +397,19 @@ class MetaLearner(object):
     #     return (torch.mean(torch.stack(losses, dim=0)),
     #             torch.mean(torch.stack(kls, dim=0)), pis)
 
-    def surrogate_loss_rewardnet(self, episodes, old_pis=None, exp_update='dice'):
-        losses, kls, pis, reward_losses, reward_losses_before = [], [], [], [], []
-        assert old_pis is None, 'old pis should be None'
-        old_pis = [None] * len(episodes)
-
-        self.dice_wts = []
-        self.dice_wts_detached = []
-        self.exp_entropy = []
-        for (train_episodes, valid_episodes), old_pi in zip(episodes, old_pis):
-            curr_params, updated_params, reward_loss_before = self.adapt(train_episodes)
-            self.baseline.fit(valid_episodes)
-
-            with torch.no_grad():
-                states, actions, rewards = valid_episodes.observations, valid_episodes.actions, valid_episodes.rewards
-                rewards_pred = self.reward_net_outer(states,actions,curr_params['z']).squeeze()
-                reward_loss = (rewards - rewards_pred)**2
-                reward_loss_before = reward_loss.mean()
-
-            # Policy Objective
-            pi = self.policy(valid_episodes.observations,updated_params['z'])
-            pis.append(detach_distribution(pi))
-
-            old_pi = detach_distribution(pi)
-            
-            values = self.baseline(valid_episodes)
-            advantages = valid_episodes.gae(values, tau=self.tau)
-            advantages = weighted_normalize(advantages, weights=valid_episodes.mask)
-
-            log_ratio = pi.log_prob(valid_episodes.actions) - old_pi.log_prob(valid_episodes.actions)
-            if log_ratio.dim() > 2:
-                log_ratio = torch.sum(log_ratio, dim=2)
-            ratio = torch.exp(log_ratio)
-
-            loss = -weighted_mean(ratio * advantages, dim=0, weights=valid_episodes.mask)
-            losses.append(loss)
-
-            # not being used 
-            mask = valid_episodes.mask
-            if valid_episodes.actions.dim() > 2:
-                mask = mask.unsqueeze(2)
-            kl = weighted_mean(kl_divergence(pi, old_pi), dim=0, weights=mask)
-            kls.append(kl)
-
-            # Reward Objective
-            states, actions, rewards = valid_episodes.observations, valid_episodes.actions, valid_episodes.rewards
-            rewards_pred = self.reward_net_outer(states,actions,updated_params['z'].detach()).squeeze()
-            reward_loss = (rewards - rewards_pred)**2
-            reward_losses.append(reward_loss.mean())
-            reward_losses_before.append(reward_loss_before)
-
-        return (torch.mean(torch.stack(losses, dim=0)),
-                torch.mean(torch.stack(kls, dim=0)), 
-                torch.mean(torch.stack(reward_losses,dim=0)),
-                torch.mean(torch.stack(reward_losses_before,dim=0)), pis)
-
-    def test_func(self, episodes):
-        reward_losses, reward_losses_before = [], []
-        for (train_episodes, valid_episodes) in episodes:
-            # reward_loss_before=torch.Tensor(0)
-            curr_params, updated_params, reward_loss_before = self.adapt(train_episodes)
-            states, actions, rewards = valid_episodes.observations, valid_episodes.actions, valid_episodes.rewards
-            # updated_params = OrderedDict()
-            # updated_params['z'] = torch.ones_like(self.z)
-            # updated_params['z'][:self.embed_size//2]*=float(train_episodes.task[0])
-            # updated_params['z'][self.embed_size//2:]*=float(train_episodes.task[1])
-            rewards_pred = self.reward_net(states,actions,updated_params['z']).squeeze()
-            reward_loss = (rewards - rewards_pred)**2
-            reward_losses.append(reward_loss.mean())
-            reward_losses_before.append(reward_loss_before)
-        return (torch.mean(torch.stack(reward_losses,dim=0)),
-                torch.mean(torch.stack(reward_losses_before,dim=0)))
-
-    def step(self, episodes, max_kl=1e-3, cg_iters=10, cg_damping=1e-2,
-             ls_max_steps=10, ls_backtrack_ratio=0.5):
-        """Meta-optimization step (ie. update of the initial parameters), based 
-        on Trust Region Policy Optimization (TRPO, [4]).
-        """
-        old_loss, _, reward_loss_after, reward_loss_before, old_pis = self.surrogate_loss_rewardnet(episodes,
-                                                                                     exp_update='dice')
-
-        # reward_loss_after, reward_loss_before= self.test_func(episodes)
-        
-        grad_vals = self.gradient_descent_update(old_loss*10, reward_loss_after*1, episodes)
-        return ((reward_loss_before, reward_loss_after)), old_loss, grad_vals
-
-    def gradient_descent_update(self, old_loss, reward_loss, episodes):
-        self.z_optimizer.zero_grad()
-        self.reward_optimizer.zero_grad()
-        self.policy_optimizer.zero_grad()
-        self.exp_optimizer.zero_grad()
-        self.reward_outer_optimizer.zero_grad()
-
-        self.iter += 1
-        # why 5 ? 
-        wts = math.exp(-self.iter/5)
-        dice_grad = torch.autograd.grad(old_loss, self.dice_wts_detached, retain_graph=True)
-        dice_wts_grad = []
-
-        for i, (train_episodes, valid_episodes) in enumerate(episodes):
-            # normalized_entropy = weighted_normalize(self.exp_entropy[i])
-            dice_grad_normalized = weighted_normalize(dice_grad[i]).detach()
-            returns = - dice_grad_normalized #+ weighted_normalize(train_episodes.rewards) #+ normalized_entropy 
-            # returns = self.get_returns(normalized_rewards).detach()
-            self.exp_baseline.fit(train_episodes, returns)
-            values = self.exp_baseline(train_episodes)
-            advantages = returns - values.squeeze()
-            ratio = self.dice_wts[i]
-            action_loss = -ratio*advantages
-            # advantages, returns = self.gae(values,normalized_rewards, tau=self.tau)
-            # advantages = weighted_normalize(advantages)#, weights=valid_episodes.mask)
-            dice_wts_grad.append(action_loss)
-
-        dice_grad_mean = 0
-        for i in range(len(self.dice_wts)):
-            dice_grad_mean += dice_wts_grad[i].sum() #/len(self.dice_wts)
-
-        scale = torch.sum(torch.tensor([dice_grad[i].sum() for i in range(len(dice_grad))]))/dice_grad_mean.sum().item()
-        dice_grad_mean*=scale.detach().item()
-        dice_grad_mean.sum().backward()
-
-        (old_loss+wts*reward_loss).backward()
-        nn.utils.clip_grad_norm_(self.policy.parameters(),self.clip)
-        nn.utils.clip_grad_norm_(self.reward_net.parameters(),self.clip)
-        nn.utils.clip_grad_norm_([self.z_old],self.clip)
-        nn.utils.clip_grad_norm_(self.exp_policy.parameters(),self.clip)
-        nn.utils.clip_grad_norm_(self.reward_net_outer.parameters(),self.clip)
-
-        grad_vals = [self.z_old.grad.abs().mean().item(), 
-                     self.policy.layer_pre1.weight.grad.abs().mean().item(),
-                     self.exp_policy.layer_pre1.weight.grad.abs().mean().item(),
-                     self.reward_net.layer_pre1.weight.grad.abs().mean().item(),
-                     self.reward_net_outer.layer_pre1.weight.grad.abs().mean().item()]
-        print("z_grad", "{:.9f}".format(grad_vals[0]))
-        print("policy_grad", "{:.9f}".format(grad_vals[1]))
-        print("exp_policy_grad", "{:.9f}".format(grad_vals[2]))
-        print("reward_grad", "{:.9f}".format(grad_vals[3]))
-        print("reward_grad_outer", "{:.9f}".format(grad_vals[4]))
-        self.z_optimizer.step()
-        self.reward_optimizer.step()
-        self.reward_outer_optimizer.step()
-        self.policy_optimizer.step()
-        self.exp_optimizer.step()
-        return grad_vals
-
-    def update_exp_policy_dice(self,old_loss, grads):
-        self.exp_optimizer.zero_grad()
-        for param, gradient in zip(self.exp_policy.parameters(),grads):
-            param.grad = gradient
-        self.exp_optimizer.step()
-
-    def to(self, device, **kwargs):
-        self.policy.to(device, **kwargs)
-        self.baseline.to(device, **kwargs)
-        self.exp_policy.to(device, **kwargs)
-        self.exp_baseline.to(device, **kwargs)
-        self.reward_net.to(device, **kwargs)
-        self.reward_net_outer.to(device, **kwargs)
-        self.z = self.z_old.to(device, **kwargs)
-        self.device = device
-
-    def get_returns(self, rewards):
-        return_ = torch.zeros(rewards.shape[1]).to(self.device)
-        returns = torch.zeros(rewards.shape[:2]).to(self.device)
-        for i in range(len(rewards) - 1, -1, -1):
-            return_ = self.gamma * return_ + rewards[i].detach()
-            returns[i] = return_
-        return returns
-
-    def gae(self, values, rewards, tau=1.0):
-        values = values.squeeze(2).detach()
-        # Add an additional 0 at the end of values for the estimation at the end of the episode
-        values = F.pad(values, (0, 0, 0, 1))
-
-        deltas = rewards + self.gamma * values[1:] - values[:-1]
-        advantages = torch.zeros_like(deltas).float()
-        gae = torch.zeros_like(deltas[0]).float()
-        for i in range(len(rewards) - 1, -1, -1):
-            gae = gae * self.gamma * tau + deltas[i]
-            advantages[i] = gae
-        returns = values[:-1] + advantages
-        return advantages, returns
+    # def test_func(self, episodes):
+    #     reward_losses, reward_losses_before = [], []
+    #     for (train_episodes, valid_episodes) in episodes:
+    #         # reward_loss_before=torch.Tensor(0)
+    #         curr_params, updated_params, reward_loss_before = self.adapt(train_episodes)
+    #         states, actions, rewards = valid_episodes.observations, valid_episodes.actions, valid_episodes.rewards
+    #         # updated_params = OrderedDict()
+    #         # updated_params['z'] = torch.ones_like(self.z)
+    #         # updated_params['z'][:self.embed_size//2]*=float(train_episodes.task[0])
+    #         # updated_params['z'][self.embed_size//2:]*=float(train_episodes.task[1])
+    #         rewards_pred = self.reward_net(states,actions,updated_params['z']).squeeze()
+    #         reward_loss = self.compute_reward_loss(rewards, rewards_pred)
+    #         reward_losses.append(reward_loss.mean())
+    #         reward_losses_before.append(reward_loss_before)
+    #     return (torch.mean(torch.stack(reward_losses,dim=0)),
+    #             torch.mean(torch.stack(reward_losses_before,dim=0)))
