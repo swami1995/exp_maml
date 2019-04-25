@@ -14,9 +14,11 @@ def weighted_mean(tensor, dim=None, weights=None):
         out = torch.mean(mean_dim)
     return out
 
-def weighted_normalize(tensor, dim=None, weights=None, epsilon=1e-8):
+def weighted_normalize(tensor, dim=None, weights=None, epsilon=1e-8, no_mean=False):
     mean = weighted_mean(tensor, dim=dim, weights=weights)
-    out = tensor * (1 if weights is None else weights) - mean
+    out = tensor * (1 if weights is None else weights)
+    if not no_mean:
+        out-=mean
     std = torch.sqrt(weighted_mean(out ** 2, dim=dim, weights=weights))
     out.div_(std + epsilon)
     return out

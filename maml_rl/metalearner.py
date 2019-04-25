@@ -46,11 +46,11 @@ class MetaLearner(object):
         self.tau = tau
         self.lr_r = lr*10
         self.eps_r = eps
-        self.lr_z = lr*0.1
+        self.lr_z = lr*0.01
         self.eps_z = eps
         self.lr_p = lr
         self.eps_p = eps
-        self.lr_e = lr#*10
+        self.lr_e = lr
         self.eps_e = eps
         self.lr_ro = lr
         self.eps_ro = eps
@@ -73,6 +73,7 @@ class MetaLearner(object):
         self.exp_entropy = []
         self.z_grad_ph = []
         self.updated_params = []
+        self.z_exp = self.z
 
     def inner_loss(self, episodes, exp_update='dice', params=None):
         """Compute the inner loss for the one-step gradient update. The inner 
@@ -86,7 +87,7 @@ class MetaLearner(object):
         # ipdb.set_trace()
         # topkthvalue = torch.kthvalue(loss.cpu(), 9*rewards_pred.shape[0]//10, dim=0, keepdim=True)
         # loss = torch.ge(loss, topkthvalue.to(self.device)).float()*loss
-        exp_pi = self.exp_policy(states, self.z.detach())
+        exp_pi = self.exp_policy(states, self.z_exp.detach())#self.z.detach()) 
         exp_log_probs_non_diff = episodes.action_probs
         exp_log_probs_diff = torch.zeros_like(exp_log_probs_non_diff)
         self.exp_entropy.append(exp_pi.entropy().sum(dim=2))
@@ -158,7 +159,7 @@ class MetaLearner(object):
             
             self.sampler.reset_task(task)
             curr_params = OrderedDict()
-            curr_params['z'] = torch.zeros_like(self.z)
+            curr_params['z'] = self.z_exp
             train_episodes = self.sampler.sample(self.exp_policy, task, params=curr_params,
                 gamma=self.gamma, device=self.device)
 
@@ -255,6 +256,7 @@ class MetaLearner(object):
         self.exp_entropy = []
         self.z_grad_ph = []
         self.updated_params = []
+        self.baseline_exp = 0
         for (train_episodes, valid_episodes), old_pi in zip(episodes, old_pis):
             curr_params, updated_params, reward_loss_before = self.adapt(train_episodes)
             reward_losses_inner.append(reward_loss_before)
@@ -284,6 +286,7 @@ class MetaLearner(object):
                 if log_ratio.dim() > 2:
                     log_ratio = torch.sum(log_ratio, dim=2)
                 ratio = torch.exp(log_ratio)
+                self.baseline_exp+=torch.log(valid_episodes.rewards.sum(0)+1)
 
                 loss = -weighted_mean(ratio * advantages, dim=0,
                     weights=valid_episodes.mask)
@@ -302,7 +305,7 @@ class MetaLearner(object):
                 reward_loss = (rewards - rewards_pred)**2
                 reward_losses.append(reward_loss.mean())
                 reward_losses_before.append(reward_loss_before)
-
+        self.baseline_exp/=(len(episodes)*valid_episodes.rewards.shape[1])
         return (torch.mean(torch.stack(losses, dim=0)),
                 torch.mean(torch.stack(kls, dim=0)), 
                 torch.mean(torch.stack(reward_losses,dim=0)),
@@ -350,42 +353,55 @@ class MetaLearner(object):
         self.iter+=1
         wts = math.exp(-self.iter/5)
         wts1 = 1
-        dice_grad = torch.autograd.grad(old_loss#+wts*reward_loss 
-            ,self.updated_params,retain_graph=True)            
-        # dice_grad_detached = torch.autograd.grad(old_loss
-        #     ,self.dice_wts_detached,retain_graph=True)
         dice_wts_grad = []
-        rewards_exp = []
+
+        # dice_grad = torch.autograd.grad(old_loss#+wts*reward_loss 
+        #     ,self.updated_params,retain_graph=True)            
+        # # dice_grad_detached = torch.autograd.grad(old_loss
+        # #     ,self.dice_wts_detached,retain_graph=True)
+        
+        # rewards_exp = []
+        # # ipdb.set_trace()
+
+        # for i, (train_episodes, valid_episodes) in enumerate(episodes):
+        #     # normalized_entropy = weighted_normalize(self.exp_entropy[i])
+        #     # dice_grad_normalized = weighted_normalize(dice_grad[i]).detach()
+        #     # returns = - dice_grad_normalized #+ weighted_normalize(train_episodes.rewards) #+ normalized_entropy 
+        #     rewards_exp.append(self.fast_lr*torch.sum(dice_grad[i].unsqueeze(0)*self.z_grad_ph[i][0], dim=-1)) #maybe normalize
+        #     # reward_detatched = dice_grad_detached[i]
+        #     normalized_rewards = weighted_normalize(rewards_exp[-1])
+        #     returns = self.get_returns(normalized_rewards).detach()
+        #     self.exp_baseline.fit(train_episodes, returns)
+        #     values = self.exp_baseline(train_episodes)
+
+        #     # advantages = returns - values.squeeze()
+        #     advantages, returns = self.gae(values,normalized_rewards, tau=self.tau)
+        #     # advantages = weighted_normalize(advantages)#, weights=valid_episodes.mask)  #### TODO: Perform experiments with normalized advantages as well.
+        #     ratio = self.dice_wts[i]
+        #     action_loss = -ratio*advantages.detach()
+        #     dice_wts_grad.append(action_loss)
+        # dice_grad_mean = 0
+        # # ipdb.set_trace()
+        # for i in range(len(self.dice_wts)):
+        #     dice_grad_mean+=dice_wts_grad[i].sum()#/len(self.dice_wts)
+        # # # ipdb.set_trace()
+        # # scale = torch.sum(torch.tensor([dice_grad[i].sum() for i in range(len(dice_grad))]))/dice_grad_mean.sum().item()
+        # scale = torch.sum(torch.tensor([rewards_exp[i].sum() for i in range(len(rewards_exp))]))/dice_grad_mean.sum().item()
+        # dice_grad_mean=dice_grad_mean*scale.item()
+        # # dice_grad_mean.sum().backward()
+
         # ipdb.set_trace()
-
         for i, (train_episodes, valid_episodes) in enumerate(episodes):
-            # normalized_entropy = weighted_normalize(self.exp_entropy[i])
-            # dice_grad_normalized = weighted_normalize(dice_grad[i]).detach()
-            # returns = - dice_grad_normalized #+ weighted_normalize(train_episodes.rewards) #+ normalized_entropy 
-            rewards_exp.append(self.fast_lr*torch.sum(dice_grad[i].unsqueeze(0)*self.z_grad_ph[i][0], dim=-1)) #maybe normalize
-            # reward_detatched = dice_grad_detached[i]
-            normalized_rewards = weighted_normalize(rewards_exp[-1])
-            returns = self.get_returns(normalized_rewards).detach()
-            self.exp_baseline.fit(train_episodes, returns)
-            values = self.exp_baseline(train_episodes)
-
-            # advantages = returns - values.squeeze()
-            advantages, returns = self.gae(values,normalized_rewards, tau=self.tau)
-            # advantages = weighted_normalize(advantages)#, weights=valid_episodes.mask)
+            returns = torch.log(valid_episodes.rewards.sum(0, keepdim=True)+1)
+            advantages = returns - self.baseline_exp
             ratio = self.dice_wts[i]
+            advantages = weighted_normalize(advantages)
             action_loss = -ratio*advantages.detach()
             dice_wts_grad.append(action_loss)
         dice_grad_mean = 0
-        # ipdb.set_trace()
         for i in range(len(self.dice_wts)):
-            dice_grad_mean+=dice_wts_grad[i].sum()#/len(self.dice_wts)
-        # # ipdb.set_trace()
-        # scale = torch.sum(torch.tensor([dice_grad[i].sum() for i in range(len(dice_grad))]))/dice_grad_mean.sum().item()
-        scale = torch.sum(torch.tensor([rewards_exp[i].sum() for i in range(len(rewards_exp))]))/dice_grad_mean.sum().item()
-        dice_grad_mean=dice_grad_mean*scale.item()
-        dice_grad_mean.sum().backward()
-
-        (old_loss+wts1*reward_loss+wts1*reward_loss_inner).backward()
+            dice_grad_mean+=dice_wts_grad[i].mean(0).sum()/(action_loss.shape[1]*len(self.dice_wts))
+        (old_loss+wts1*reward_loss+dice_grad_mean).backward()
         nn.utils.clip_grad_norm_(self.policy.parameters(),self.clip)
         nn.utils.clip_grad_norm_(self.reward_net.parameters(),self.clip)
         nn.utils.clip_grad_norm_([self.z_old],self.clip)
