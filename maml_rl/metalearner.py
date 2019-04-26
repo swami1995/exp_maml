@@ -73,14 +73,14 @@ class MetaLearner(object):
         self.exp_entropy = []
         self.z_grad_ph = []
         self.updated_params = []
-        self.z_exp = self.z
+        self.z_exp = torch.zeros_like(self.z)
 
     def inner_loss(self, episodes, exp_update='dice', params=None):
         """Compute the inner loss for the one-step gradient update. The inner 
         loss is REINFORCE with baseline [2], computed on advantages estimated 
         with Generalized Advantage Estimation (GAE, [3]).
         """
-        states, actions, rewards = episodes.observations, episodes.actions, episodes.rewards
+        states, actions, rewards = episodes.observations, episodes.actions, episodes.returns
         rewards_pred, self.z_ph = self.reward_net(states,actions,self.z, ph=True)
         rewards_pred = rewards_pred.squeeze()
         loss = (rewards - rewards_pred)**2
@@ -263,7 +263,7 @@ class MetaLearner(object):
             self.baseline.fit(valid_episodes)
             # old_pi = curr_params
             with torch.no_grad():
-                states, actions, rewards = valid_episodes.observations, valid_episodes.actions, valid_episodes.rewards
+                states, actions, rewards = valid_episodes.observations, valid_episodes.actions, valid_episodes.returns
                 rewards_pred = self.reward_net_outer(states,actions,curr_params['z']).squeeze()
                 reward_loss = (rewards - rewards_pred)**2
                 reward_loss_before = reward_loss.mean()
@@ -300,7 +300,7 @@ class MetaLearner(object):
                 kls.append(kl)
 
                 # Reward Objective
-                states, actions, rewards = valid_episodes.observations, valid_episodes.actions, valid_episodes.rewards
+                states, actions, rewards = valid_episodes.observations, valid_episodes.actions, valid_episodes.returns
                 rewards_pred = self.reward_net_outer(states,actions,updated_params['z'].detach()).squeeze()
                 reward_loss = (rewards - rewards_pred)**2
                 reward_losses.append(reward_loss.mean())
@@ -348,6 +348,7 @@ class MetaLearner(object):
     def gradient_descent_update(self, old_loss, reward_loss, reward_loss_inner, episodes):
         self.z_optimizer.zero_grad()
         self.reward_optimizer.zero_grad()
+        self.reward_outer_optimizer.zero_grad()
         self.policy_optimizer.zero_grad()
         self.exp_optimizer.zero_grad()
         self.iter+=1
@@ -395,7 +396,7 @@ class MetaLearner(object):
             returns = torch.log(valid_episodes.rewards.sum(0, keepdim=True)+1)
             advantages = returns - self.baseline_exp
             ratio = self.dice_wts[i]
-            advantages = weighted_normalize(advantages)
+            # advantages = weighted_normalize(advantages)
             action_loss = -ratio*advantages.detach()
             dice_wts_grad.append(action_loss)
         dice_grad_mean = 0
