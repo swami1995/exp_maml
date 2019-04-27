@@ -62,7 +62,7 @@ class RewardNetMLP(nn.Module):
         if ph:
             new_z_ph = new_z.detach()
             new_z_ph.requires_grad_()
-            input = torch.cat([state,action,new_z_ph],dim=-1)
+            input = torch.cat([state,action,new_z],dim=-1)
         else:
             input = torch.cat([state,action,new_z],dim=-1)
         if params is None:
@@ -86,6 +86,6 @@ class RewardNetMLP(nn.Module):
         reward = F.linear(output, weight=params['reward_layer.weight'],
             bias=params['reward_layer.bias'])
         if ph:
-            return reward, new_z_ph
+            return reward, new_z
         else:
             return reward

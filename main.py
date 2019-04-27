@@ -52,7 +52,8 @@ def main(args):
     continuous_actions = (args.env_name in ['AntVel-v1', 'AntDir-v1',
         'AntPos-v0', 'HalfCheetahVel-v1', 'HalfCheetahDir-v1',
         '2DNavigation-v0', '2DPointEnvCorner-v0', '2DPointEnvCorner-v1'])
-
+    import ipdb
+    # ipdb.set_trace()
     save_folder = os.path.join(args.savedir, args.env_name, args.output_folder)
     # save_folder = './saves/{0}'.format(args.env_name+'/'+args.output_folder)
     if args.output_folder!='maml-trial' and args.output_folder!='trial':
