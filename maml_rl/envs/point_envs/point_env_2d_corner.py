@@ -42,6 +42,7 @@ class MetaPointEnvCorner(gym.Env):
         """
         prev_state = self._state
         self._state = prev_state + np.clip(action, -0.2, 0.2)
+        self._state = np.clip(self._state, -4, 4)
         reward = self.reward(prev_state, action, self._state)
         done = False # self.done(self._state)
         next_observation = np.copy(self._state)

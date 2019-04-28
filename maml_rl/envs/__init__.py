@@ -58,6 +58,13 @@ register(
     max_episode_steps=200
 )
 
+register(
+    'AntRandDirecEnv-v1',
+    entry_point='maml_rl.envs.utils:mujoco_wrapper',
+    kwargs={'entry_point': 'maml_rl.envs.mujoco.ant_rand_direc:AntRandDirecEnv'},
+    max_episode_steps=200
+)
+
 # 2D Navigation
 # ----------------------------------------
 
