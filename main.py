@@ -1,5 +1,3 @@
-import maml_rl.envs
-import gym
 import numpy as np
 import torch
 import json
@@ -41,7 +39,6 @@ def plotting(episodes, batch, save_folder, n):
         plt.legend()
         plt.savefig(os.path.join(save_folder,'plot-{0}-{1}.png'.format(batch,i)))
         plt.clf()
-    return None
 
 
 def main(args):
@@ -68,8 +65,10 @@ def main(args):
                 shutil.rmtree(log_folder)
             else:
                 raise NotImplementedError('Unknown input')
-        os.makedirs(save_folder)
-        os.makedirs(log_folder)
+        if not os.path.exists(save_folder):
+            os.makedirs(save_folder)
+        if not os.path.exists(log_folder):
+            os.makedirs(log_folder)
 
         writer = SummaryWriter(log_folder)
 
@@ -133,7 +132,6 @@ def main(args):
 
 if __name__ == '__main__':
     import argparse
-    import os
     import multiprocessing as mp
 
     parser = argparse.ArgumentParser(description='Reinforcement learning with '
