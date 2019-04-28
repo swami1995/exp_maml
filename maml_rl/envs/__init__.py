@@ -58,10 +58,11 @@ register(
     max_episode_steps=200
 )
 
+#  ProMP environments
 register(
     'AntRandDirecEnv-v1',
     entry_point='maml_rl.envs.utils:mujoco_wrapper',
-    kwargs={'entry_point': 'maml_rl.envs.mujoco.ant_rand_direc:AntRandDirecEnv'},
+    kwargs={'entry_point': 'maml_rl.envs.mujoco.ant_rand_direc:AntRandDirecEnv', 'promp_env': True},
     max_episode_steps=200
 )
 
