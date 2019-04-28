@@ -1,4 +1,3 @@
-import ipdb
 import torch
 import torch.nn as nn
 from torch.nn.utils.convert_parameters import (vector_to_parameters,
@@ -182,8 +181,9 @@ class MetaLearner(object):
         old_loss.backward()
         nn.utils.clip_grad_norm_(self.policy.parameters(),0.5)
         self.policy_optimizer.step()
+
     def Conjugate_gradient_descent(self, episodes, old_loss, old_pis, max_kl=1e-3, cg_iters=10, 
-        cg_damping=1e-2, ls_max_steps=10, ls_backtrack_ratio=0.5):
+                                   cg_damping=1e-2, ls_max_steps=10, ls_backtrack_ratio=0.5):
         grads = torch.autograd.grad(old_loss, self.policy.parameters())
         grads = parameters_to_vector(grads)
 

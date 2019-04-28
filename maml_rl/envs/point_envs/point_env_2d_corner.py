@@ -2,7 +2,7 @@ import gym
 import numpy as np
 from gym.spaces import Box
 from gym.utils import seeding
-import ipdb
+
 
 class MetaPointEnvCorner(gym.Env):
     """
@@ -10,7 +10,7 @@ class MetaPointEnvCorner(gym.Env):
     (one of the 4 points (-2,-2), (-2, 2), (2, -2), (2,2)) which are sampled with equal probability
     """
 
-    def __init__(self, reward_type='dense', sparse_reward_radius=0.5, task = {}):
+    def __init__(self, reward_type='dense', sparse_reward_radius=0.5, task={}):
         super(MetaPointEnvCorner,self).__init__()
 
         assert reward_type in ['dense', 'dense_squared', 'sparse']
@@ -23,7 +23,7 @@ class MetaPointEnvCorner(gym.Env):
         self.seed()
         self._goal = task
 
-    def seed(self, seed = None):
+    def seed(self, seed=None):
         self.np_random, seed = seeding.np_random(seed)
 
     def step(self, action):
@@ -62,7 +62,7 @@ class MetaPointEnvCorner(gym.Env):
         if obs.ndim == 1:
             return self.done(np.array([obs]))
         elif obs.ndim == 2:
-            goal_distance = np.linalg.norm(obs - self._goal[None,:], axis=1)
+            # goal_distance = np.linalg.norm(obs - self._goal[None,:], axis=1)
             return np.max(self._state) > 3
 
     def reward(self, obs, act, obs_next):
@@ -74,14 +74,14 @@ class MetaPointEnvCorner(gym.Env):
             elif self.reward_type == 'dense_squared':
                 return - goal_distance**2
             elif self.reward_type == 'sparse':
-                dist_from_start = np.linalg.norm(obs_next, ord=1, axis=1)[0]
-                if dist_from_start < self.sparse_reward_radius:
-                    return 0
-                dists = [np.linalg.norm(obs_next - corner[None, :], axis=1) for corner in self.corners]
-                if np.min(goal_distance) == min(dists):
-                    return np.linalg.norm(obs - self._goal[None,:], axis=1)[0] - goal_distance
-                return 0
-                # return np.maximum(self.sparse_reward_radius - goal_distance, 0)
+                # dist_from_start = np.linalg.norm(obs_next, ord=1, axis=1)[0]
+                # if dist_from_start < self.sparse_reward_radius:
+                #     return 0
+                # dists = [np.linalg.norm(obs_next - corner[None, :], axis=1) for corner in self.corners]
+                # if np.min(goal_distance) == min(dists):
+                #     return np.linalg.norm(obs - self._goal[None,:], axis=1)[0] - goal_distance
+                # return 0
+                return np.maximum(self.sparse_reward_radius - goal_distance, 0)
 
         elif obs_next.ndim == 1:
             return self.reward(np.array([obs]), np.array([act]), np.array([obs_next]))

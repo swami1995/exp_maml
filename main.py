@@ -3,16 +3,17 @@ import gym
 import numpy as np
 import torch
 import json
-import ipdb
+
 import os
 import sys
 import matplotlib.pyplot as plt
+import shutil
+import ipdb
 
 from maml_rl.metalearner import MetaLearner
 from maml_rl.policies import CategoricalMLPPolicy, NormalMLPPolicy
 from maml_rl.baseline import LinearFeatureBaseline
 from maml_rl.sampler import BatchSampler
-from maml_rl.envs.point_envs.point_env_2d_corner import MetaPointEnvCorner
 
 from tensorboardX import SummaryWriter
 
@@ -21,18 +22,23 @@ def total_rewards(episodes_rewards, aggregation=torch.mean):
         for rewards in episodes_rewards], dim=0))
     return rewards.item()
 
-def plotting(episodes, batch, save_folder,n):
+def plotting(episodes, batch, save_folder, n):
     for i in range(n):
         train_ep = episodes[i][0]
         val_ep = episodes[i][1]
         task = episodes[i][0].task
+        
+        # exploration and exploitation trajectories
         train_obs = train_ep.observations[:,0].cpu().numpy()
         val_obs = val_ep.observations[:,0].cpu().numpy()
+        plt.plot(train_obs[:,0], train_obs[:,1], 'b', label='Exploration')
+        plt.plot(val_obs[:,0], val_obs[:,1], 'k', label='Exploitation')
+        plt.scatter(val_obs[-1,0], val_obs[-1,1], s=20, color='k')
+
         corners = np.array([np.array([-2,-2]), np.array([2,-2]), np.array([-2,2]), np.array([2, 2])])
-        plt.plot(train_obs[:,0], train_obs[:,1], 'b')
-        plt.plot(val_obs[:,0], val_obs[:,1], 'k')
-        plt.scatter(corners[:,0], corners[:,1], s=10, color='g')
-        plt.scatter(task[None,0], task[None,1], s=10, color='r')
+        plt.scatter(corners[:,0], corners[:,1], s=20, color='g')
+        plt.scatter(task[None,0], task[None,1], s=20, color='r', label='Goal')
+        plt.legend()
         plt.savefig(os.path.join(save_folder,'plot-{0}-{1}.png'.format(batch,i)))
         plt.clf()
     return None
@@ -43,21 +49,34 @@ def main(args):
         'AntPos-v0', 'HalfCheetahVel-v1', 'HalfCheetahDir-v1',
         '2DNavigation-v0', '2DPointEnvCorner-v0'])
 
-    save_folder = './saves/{0}'.format(args.env_name+'/'+args.output_folder)
-    if args.output_folder!='maml-trial' and args.output_folder!='trial':
-        i=0
-        while os.path.exists(save_folder):
-            args.output_folder=str(i+1)
-            i+=1
-            save_folder = './saves/{0}'.format(args.env_name+'/'+args.output_folder)
-            log_directory = './logs/{0}'.format(args.env_name+'/'+args.output_folder)
+    if not args.test:
+        save_folder = './saves/{0}'.format(args.env_name+'/'+args.output_folder)
+        log_folder = './logs/{0}'.format(args.env_name+'/'+args.output_folder)
+        if os.path.exists(save_folder):
+            print('Save folder already exists! Enter')
+            text = 'c (rename the existing directory with _old and continue)\n' + \
+                   's (stop)!\ndel (delete existing dir): '
+            ch = input(text)
+                        
+            if ch == 's':
+                sys.exit(0)
+            elif ch == 'c':
+                os.rename(save_folder, save_folder+'_old')
+                os.rename(log_folder, log_folder+'_old')
+            elif ch == 'del':
+                shutil.rmtree(save_folder)
+                shutil.rmtree(log_folder)
+            else:
+                raise NotImplementedError('Unknown input')
         os.makedirs(save_folder)
-    writer = SummaryWriter('./logs/{0}'.format(args.env_name+'/'+args.output_folder))
+        os.makedirs(log_folder)
 
-    with open(os.path.join(save_folder, 'config.json'), 'w') as f:
-        config = {k: v for (k, v) in vars(args).items() if k != 'device'}
-        config.update(device=args.device.type)
-        json.dump(config, f, indent=2)
+        writer = SummaryWriter(log_folder)
+
+        with open(os.path.join(save_folder, 'config.json'), 'w') as f:
+            config = {k: v for (k, v) in vars(args).items() if k != 'device'}
+            config.update(device=args.device.type)
+            json.dump(config, f, indent=2)
 
 
     sampler = BatchSampler(args.env_name, batch_size=args.fast_batch_size,
@@ -88,25 +107,28 @@ def main(args):
             cg_damping=args.cg_damping, ls_max_steps=args.ls_max_steps,
             ls_backtrack_ratio=args.ls_backtrack_ratio)
 
-        print('total_rewards/before_update', total_rewards([ep.rewards for ep, _ in episodes]), batch)
-        print('total_rewards/after_update', total_rewards([ep.rewards for _, ep in episodes]), batch)
+        before_update_reward = total_rewards([ep.rewards for ep, _ in episodes])
+        after_update_reward = total_rewards([ep.rewards for _, ep in episodes])
+        print('Batch {:d}/{:d}'.format(batch+1, args.num_batches))
+        print('Rewards')
+        print('Before update {:.3f} After update {:.3f}\n'.format(
+            before_update_reward, after_update_reward))
         
-        # Plotting figure
-        # plotting(episodes, batch, save_folder,args.num_plots)
+        if not args.test:
+            # Plotting figure
+            if args.env_name in ['2DNavigation-v0', '2DPointEnvCorner-v0']:
+                plotting(episodes, batch, save_folder, args.num_plots)
 
-        if args.load_dir is not None:
-            sys.exit(0)
-            
-        # Tensorboard
-        writer.add_scalar('total_rewards/before_update',
-            total_rewards([ep.rewards for ep, _ in episodes]), batch)
-        writer.add_scalar('total_rewards/after_update',
-            total_rewards([ep.rewards for _, ep in episodes]), batch)
+            # Tensorboard
+            writer.add_scalar('total_rewards/before_update',
+                before_update_reward, batch)
+            writer.add_scalar('total_rewards/after_update',
+                after_update_reward, batch)
 
-        # Save policy network
-        with open(os.path.join(save_folder,
-                'policy-{0}.pt'.format(batch)), 'wb') as f:
-            torch.save(policy.state_dict(), f)
+            # Save policy network
+            with open(os.path.join(save_folder,
+                    'policy-{0}.pt'.format(batch)), 'wb') as f:
+                torch.save(policy.state_dict(), f)
 
 
 if __name__ == '__main__':
@@ -118,7 +140,7 @@ if __name__ == '__main__':
         'Model-Agnostic Meta-Learning (MAML)')
 
     # General
-    parser.add_argument('--env-name', type=str,
+    parser.add_argument('--env-name', type=str, default='2DPointEnvCorner-v0',
         help='name of the environment')
     parser.add_argument('--gamma', type=float, default=0.95,
         help='value of the discount factor gamma')
@@ -172,6 +194,8 @@ if __name__ == '__main__':
         help='epsilon for exploration network optimizer')
     parser.add_argument('--vpg-flag', action='store_true',
         help='flag to perform vpg')
+
+    parser.add_argument('--test', action='store_true', help='no logging')
 
     args = parser.parse_args()
 

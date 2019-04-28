@@ -4,7 +4,7 @@ import multiprocessing as mp
 
 from maml_rl.envs.subproc_vec_env import SubprocVecEnv
 from maml_rl.episode import BatchEpisodes
-import ipdb
+
 def make_env(env_name):
     def _make_env():
         return gym.make(env_name)
