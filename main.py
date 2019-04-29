@@ -51,8 +51,10 @@ def plotting(episodes, batch, save_folder, n):
 def main(args):
     continuous_actions = (args.env_name in ['AntVel-v1', 'AntDir-v1',
         'AntPos-v0', 'HalfCheetahVel-v1', 'HalfCheetahDir-v1',
-        '2DNavigation-v0', '2DPointEnvCorner-v0', '2DPointEnvCorner-v1'])
-    import ipdb
+        '2DNavigation-v0', '2DPointEnvCorner-v0', '2DPointEnvCorner-v1',
+        'AntRandDirecEnv-v1', 'AntRandDirec2DEnv-v1', 'AntRandGoalEnv-v1', 'HalfCheetahRandDirecEnv-v1',
+        'HalfCheetahRandVelEnv-v1', 'HumanoidRandDirecEnv-v1', 'HumanoidRandDirec2DEnv-v1'])
+    # import ipdb
     # ipdb.set_trace()
     save_folder = os.path.join(args.savedir, args.env_name, args.output_folder)
     # save_folder = './saves/{0}'.format(args.env_name+'/'+args.output_folder)
@@ -129,21 +131,25 @@ def main(args):
 
     exp_baseline = LinearFeatureBaseline(
         int(np.prod(sampler.envs.observation_space.shape)))
-
+    
+    start_batch = 0
+    z_old = None
     if args.load_dir is not None:
+        z_old = torch.zeros((1,args.embed_size))
         folder_idx = args.load_dir.split('.')
-        load_folder = './saves/{0}'.format(args.env_name+'/'+folder_idx[0])
+        start_batch = int(folder_idx[1])
+        load_folder = './saves/{0}'.format(args.env_name+'/'+folder_idx[0]+'/')
         policy.load_state_dict(torch.load(load_folder+'policy-{0}.pt'.format(folder_idx[1])))
         exp_policy.load_state_dict(torch.load(load_folder+'policy-{0}-exp.pt'.format(folder_idx[1])))
         reward_net.load_state_dict(torch.load(load_folder+'reward-{0}.pt'.format(folder_idx[1])))
-        metalearner.z_old.copy_(torch.load(load_folder+'z_old-{0}.pt'.format(folder_idx[1]))['z_old'])
+        z_old.copy_(torch.load(load_folder+'z_old-{0}.pt'.format(folder_idx[1]))['z_old'])
         reward_net_outer.load_state_dict(torch.load(load_folder+'reward_outer-{0}.pt'.format(folder_idx[1])))
 
-    metalearner = MetaLearner(sampler, policy, exp_policy, baseline, exp_baseline, reward_net, reward_net_outer, embed_size=args.embed_size, gamma=args.gamma,
+    metalearner = MetaLearner(sampler, policy, exp_policy, baseline, exp_baseline, reward_net, reward_net_outer, z_old, embed_size=args.embed_size, gamma=args.gamma,
         fast_lr=args.fast_lr, tau=args.tau, lr=args.exp_lr, eps=args.exp_eps, device=args.device)
-
-    best_reward_after=-400
-    for batch in range(args.num_batches):
+    
+    best_reward_after=-40000
+    for batch in range(start_batch+1,args.num_batches):
         tasks = sampler.sample_tasks(num_tasks=args.meta_batch_size)
         episodes = metalearner.sample(tasks, first_order=args.first_order)
         r_loss, pg_loss, grad_vals = metalearner.step(episodes, max_kl=args.max_kl, cg_iters=args.cg_iters,
@@ -157,8 +163,8 @@ def main(args):
         print('reward_loss/after_update', r_loss[1], batch)
         print('pg_loss/after_update', pg_loss, batch)
 
-        if args.load_dir is not None:
-            sys.exit(0)
+        # if args.load_dir is not None:
+        #     sys.exit(0)
             
         # Tensorboard
         for i in range(args.num_updates):

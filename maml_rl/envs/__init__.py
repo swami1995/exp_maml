@@ -80,3 +80,56 @@ register(
     max_episode_steps=100
 
 )
+
+# Mujoco Envs
+# ---------------------------------------
+
+register(
+    'AntRandDirecEnv-v1',
+    entry_point='maml_rl.envs.utils:mujoco_wrapper',
+    kwargs={'entry_point': 'maml_rl.envs.mujoco_envs.ant_rand_direc:AntRandDirecEnv', 'promp_env': True},
+    max_episode_steps=200
+)
+
+register(
+    'AntRandDirec2DEnv-v1',
+    entry_point='maml_rl.envs.utils:mujoco_wrapper',
+    kwargs={'entry_point': 'maml_rl.envs.mujoco_envs.ant_rand_direc_2d:AntRandDirec2DEnv', 'promp_env': True},
+    max_episode_steps=200
+)
+
+register(
+    'AntRandGoalEnv-v1',
+    entry_point='maml_rl.envs.utils:mujoco_wrapper',
+    kwargs={'entry_point': 'maml_rl.envs.mujoco_envs.ant_rand_goal:AntRandGoalEnv', 'promp_env': True},
+    max_episode_steps=200
+)
+
+register(
+    'HalfCheetahRandDirecEnv-v1',
+    entry_point='maml_rl.envs.utils:mujoco_wrapper',
+    kwargs={'entry_point': 'maml_rl.envs.mujoco_envs.half_cheetah_rand_direc:HalfCheetahRandDirecEnv', 'promp_env': True},
+    max_episode_steps=200
+)
+
+register(
+    'HalfCheetahRandVelEnv-v1',
+    entry_point='maml_rl.envs.utils:mujoco_wrapper',
+    kwargs={'entry_point': 'maml_rl.envs.mujoco_envs.half_cheetah_rand_vel:HalfCheetahRandVelEnv', 'promp_env': True},
+    max_episode_steps=200
+)
+
+register(
+    'HumanoidRandDirecEnv-v1',
+    entry_point='maml_rl.envs.utils:mujoco_wrapper',
+    kwargs={'entry_point': 'maml_rl.envs.mujoco_envs.humanoid_rand_direc:HumanoidRandDirecEnv', 'promp_env': True},
+    max_episode_steps=200
+)
+
+register(
+    'HumanoidRandDirec2DEnv-v1',
+    entry_point='maml_rl.envs.utils:mujoco_wrapper',
+    kwargs={'entry_point': 'maml_rl.envs.mujoco_envs.humanoid_rand_direc_2d:HumanoidRandDirec2DEnv', 'promp_env': True},
+    max_episode_steps=200
+)
+

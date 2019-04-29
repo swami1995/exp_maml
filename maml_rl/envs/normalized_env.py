@@ -74,3 +74,24 @@ class NormalizedRewardWrapper(gym.RewardWrapper):
         self._mean = (1.0 - self.alpha) * self._mean + self.alpha * reward
         self._var = (1.0 - self.alpha) * self._var + self.alpha * np.square(reward - self._mean)
         return (reward - self._mean) / (np.sqrt(self._var) + self.epsilon)
+
+# ProMP normalization
+class NormalizedActionWrapperProMP(gym.ActionWrapper):
+    def __init__(self, env, normalization_scale=10.):
+        super().__init__(env)
+        self._normalization_scale = normalization_scale
+        ub = np.ones(self.env.action_space.shape) * self._normalization_scale
+        self.action_space = spaces.Box(low=-ub, high=ub, dtype=np.float32)
+
+    def action(self, action):
+        lb, ub = self.env.action_space.low, self.env.action_space.high
+        scaled_action = lb + (action + self._normalization_scale) * (ub - lb) / (2 * self._normalization_scale)
+        scaled_action = np.clip(scaled_action, lb, ub)
+        return scaled_action
+
+    def reverse_action(self, action):
+        # Map the original action to normalized action space
+        lb, ub = self.env.action_space.low, self.env.action_space.high
+        action = 2.0 * self._normalization_scale * (action - lb) / (ub - lb) - self._normalization_scale
+        action = np.clip(action, lb, ub)
+        return action

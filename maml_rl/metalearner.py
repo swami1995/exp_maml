@@ -32,7 +32,7 @@ class MetaLearner(object):
         Pieter Abbeel, "Trust Region Policy Optimization", 2015
         (https://arxiv.org/abs/1502.05477)
     """
-    def __init__(self, sampler, policy, exp_policy, baseline, exp_baseline, reward_net, reward_net_outer, embed_size=100, gamma=0.95,
+    def __init__(self, sampler, policy, exp_policy, baseline, exp_baseline, reward_net, reward_net_outer, z_old, embed_size=100, gamma=0.95,
                  fast_lr=0.5, tau=1.0, lr=7e-4, eps=1e-5, device='cpu'):
         self.sampler = sampler
         self.policy = policy
@@ -57,17 +57,20 @@ class MetaLearner(object):
         self.embed_size = embed_size
         self.alpha = 5e-8
         self.clip = 0.5
-        self.z_old = nn.Parameter(torch.zeros((1,embed_size)))
-        nn.init.xavier_uniform_(self.z_old)
-
+        if z_old is None:
+            self.z_old = nn.Parameter(torch.zeros((1,embed_size)))
+            nn.init.xavier_uniform_(self.z_old)
+        else:
+            self.z_old = nn.Parameter(z_old)
+        
         self.to(device)
         self.z_optimizer = optim.Adam([self.z_old], lr=self.lr_z, eps=self.eps_z)
         self.reward_optimizer = optim.Adam(self.reward_net.parameters(), lr=self.lr_r, eps=self.eps_r)
         self.policy_optimizer = optim.Adam(self.policy.parameters(), lr=self.lr_p, eps=self.eps_p)
         self.exp_optimizer = optim.Adam(self.exp_policy.parameters(), lr=self.lr_e, eps=self.eps_e)
         self.reward_outer_optimizer = optim.Adam(self.reward_net_outer.parameters(), lr=self.lr_ro, eps=self.eps_ro)
-        lr_e_lambda = lambda epoch: 0.995
-        self.exp_optimizer_scheduler = optim.lr_scheduler.LambdaLR(self.exp_optimizer, lr_e_lambda)
+        # lr_e_lambda = lambda epoch: 0.995
+        # self.exp_optimizer_scheduler = optim.lr_scheduler.LambdaLR(self.exp_optimizer, lr_e_lambda)
         self.check=False       
         self.iter = 0
         self.dice_wts = []
@@ -297,6 +300,8 @@ class MetaLearner(object):
 
                 loss = -weighted_mean(ratio * advantages, dim=0,
                     weights=valid_episodes.mask)
+                if np.isnan(loss.sum().item()):
+                    ipdb.set_trace()
                 losses.append(loss)
 
                 mask = valid_episodes.mask
@@ -394,15 +399,18 @@ class MetaLearner(object):
             dice_grad_mean+=dice_wts_grad[i].sum()#/len(self.dice_wts)
         # # ipdb.set_trace()
         # scale = torch.sum(torch.tensor([dice_grad[i].sum() for i in range(len(dice_grad))]))/dice_grad_mean.sum().item()
-        scale = torch.abs(torch.sum(torch.tensor([rewards_exp[i].sum() for i in range(len(rewards_exp))]))/dice_grad_mean.sum().item())
+        if dice_grad_mean==0:
+            scale=torch.tensor(1)
+        else:
+            scale = torch.abs(torch.sum(torch.tensor([rewards_exp[i].sum() for i in range(len(rewards_exp))]))/dice_grad_mean.sum().item())
         dice_grad_mean=dice_grad_mean*scale.item()
         if np.isnan(dice_grad_mean.item()):
-            ipdb.set_trace()
-            self.exp_policy.layer_pre1.weight.grad=torch.zeros(self.exp_policy.layer_pre1.weight.shape)
+            # ipdb.set_trace()
+            self.exp_policy.layer_pre1.weight.grad=torch.zeros_like(self.exp_policy.layer_pre1.weight)
         else:
             dice_grad_mean.backward()
             if np.isnan(self.exp_policy.layer_pre1.weight.grad.abs().mean().item()):
-                self.exp_policy.layer_pre1.weight.grad=torch.zeros(self.exp_policy.layer_pre1.weight.shape)
+                self.exp_policy.layer_pre1.weight.grad=torch.zeros_like(self.exp_policy.layer_pre1.weight)
 
         # ipdb.set_trace()
         # for i, (train_episodes, valid_episodes) in enumerate(episodes):
@@ -438,7 +446,7 @@ class MetaLearner(object):
         self.reward_outer_optimizer.step()
         self.policy_optimizer.step()
         self.exp_optimizer.step()
-        self.exp_optimizer_scheduler.step()
+        # self.exp_optimizer_scheduler.step()
         return grad_vals
 
     # def conjugate_gradient_update(self, grads, episodes, max_kl, cg_iters, 
