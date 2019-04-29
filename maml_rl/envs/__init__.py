@@ -66,6 +66,21 @@ register(
     max_episode_steps=200
 )
 
+register(
+    'HalfCheetahRandDirecEnv-v1',
+    entry_point='maml_rl.envs.utils:mujoco_wrapper',
+    kwargs={'entry_point': 'maml_rl.envs.mujoco.half_cheetah_rand_direc:HalfCheetahRandDirecEnv', 'promp_env': True},
+    max_episode_steps=200
+)
+
+register(
+    'AntRandGoal-v1',
+    entry_point='maml_rl.envs.utils:mujoco_wrapper',
+    kwargs={'entry_point': 'maml_rl.envs.mujoco.ant_rand_goal:AntRandGoalEnv', 'promp_env': True},
+    max_episode_steps=200
+)
+
+
 # 2D Navigation
 # ----------------------------------------
 

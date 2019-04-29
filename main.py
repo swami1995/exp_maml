@@ -44,7 +44,8 @@ def plotting(episodes, batch, save_folder, n):
 def main(args):
     continuous_actions = (args.env_name in ['AntVel-v1', 'AntDir-v1',
         'AntPos-v0', 'HalfCheetahVel-v1', 'HalfCheetahDir-v1',
-        '2DNavigation-v0', '2DPointEnvCorner-v0', 'AntRandDirecEnv-v1'])
+        '2DNavigation-v0', '2DPointEnvCorner-v0', 'AntRandDirecEnv-v1',
+        'HalfCheetahRandDirecEnv-v1', 'AntRandGoal-v1'])
 
     if not args.test:
         save_folder = './saves/{0}'.format(args.env_name+'/'+args.output_folder)
@@ -132,7 +133,6 @@ def main(args):
 
 if __name__ == '__main__':
     import argparse
-    import multiprocessing as mp
 
     parser = argparse.ArgumentParser(description='Reinforcement learning with '
         'Model-Agnostic Meta-Learning (MAML)')
@@ -140,7 +140,7 @@ if __name__ == '__main__':
     # General
     parser.add_argument('--env-name', type=str, default='2DPointEnvCorner-v0',
         help='name of the environment')
-    parser.add_argument('--gamma', type=float, default=0.95,
+    parser.add_argument('--gamma', type=float, default=0.99,
         help='value of the discount factor gamma')
     parser.add_argument('--tau', type=float, default=1.0,
         help='value of the discount factor for GAE')
@@ -156,15 +156,15 @@ if __name__ == '__main__':
     # Task-specific
     parser.add_argument('--fast-batch-size', type=int, default=20,
         help='batch size for each individual task')
-    parser.add_argument('--fast-lr', type=float, default=0.5,
+    parser.add_argument('--fast-lr', type=float, default=0.1,
         help='learning rate for the 1-step gradient update of MAML')
 
     # Optimization
-    parser.add_argument('--num-batches', type=int, default=200,
+    parser.add_argument('--num-batches', type=int, default=1000,
         help='number of batches')
     parser.add_argument('--meta-batch-size', type=int, default=40,
         help='number of tasks per batch')
-    parser.add_argument('--max-kl', type=float, default=1e-2,
+    parser.add_argument('--max-kl', type=float, default=0.01,
         help='maximum value for the KL constraint in TRPO')
     parser.add_argument('--cg-iters', type=int, default=10,
         help='number of iterations of conjugate gradient')
@@ -182,7 +182,7 @@ if __name__ == '__main__':
         help='name of the directory to load model')
     parser.add_argument('--num-plots', type=int, default=1,
         help='number of plots to save per iteration')
-    parser.add_argument('--num-workers', type=int, default=mp.cpu_count() - 1,
+    parser.add_argument('--num-workers', type=int, default=8,
         help='number of workers for trajectories sampling')
     parser.add_argument('--device', type=str, default='cpu',
         help='set the device (cpu or cuda)')
@@ -202,9 +202,10 @@ if __name__ == '__main__':
         os.makedirs('./logs')
     if not os.path.exists('./saves'):
         os.makedirs('./saves')
-    # Device
-    args.device = torch.device(args.device
-        if torch.cuda.is_available() else 'cpu')
+    
+    # Override Device
+    args.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    
     # Slurm
     if 'SLURM_JOB_ID' in os.environ:
         args.output_folder += '-{0}'.format(os.environ['SLURM_JOB_ID'])
