@@ -6,6 +6,7 @@ import os
 import sys
 import matplotlib.pyplot as plt
 import shutil
+import datetime
 import ipdb
 
 from maml_rl.metalearner import MetaLearner
@@ -78,7 +79,7 @@ def main(args):
             config.update(device=args.device.type)
             json.dump(config, f, indent=2)
 
-
+    start = datetime.datetime.now()
     sampler = BatchSampler(args.env_name, batch_size=args.fast_batch_size,
         num_workers=args.num_workers)
     if continuous_actions:
@@ -109,11 +110,13 @@ def main(args):
 
         before_update_reward = total_rewards([ep.rewards for ep, _ in episodes])
         after_update_reward = total_rewards([ep.rewards for _, ep in episodes])
+        end = datetime.datetime.now()
         print('Batch {:d}/{:d}'.format(batch+1, args.num_batches))
         print('Rewards')
-        print('Before update {:.3f} After update {:.3f}\n'.format(
+        print('Before update {:.3f} After update {:.3f}'.format(
             before_update_reward, after_update_reward))
-        
+        print('Time {}\n'.format(end-start))
+
         if not args.test:
             # Plotting figure
             if args.env_name in ['2DNavigation-v0', '2DPointEnvCorner-v0']:
