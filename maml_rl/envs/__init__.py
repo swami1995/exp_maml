@@ -122,7 +122,7 @@ register(
 register(
     'HumanoidRandDirecEnv-v1',
     entry_point='maml_rl.envs.utils:mujoco_wrapper',
-    kwargs={'entry_point': 'maml_rl.envs.mujoco_envs.humanoid_rand_direc:HumanoidRandDirecEnv', 'promp_env': True},
+    kwargs={'entry_point': 'maml_rl.envs.mujoco_envs.humanoid_rand_direc:HumanoidRandDirecEnv', 'promp_env': True, 'humanoid': True},
     max_episode_steps=200
 )
 
