@@ -46,11 +46,11 @@ class MetaLearner(object):
         self.tau = tau
         self.lr_r = lr
         self.eps_r = eps
-        self.lr_z = lr*0.005
+        self.lr_z = lr*0.1#*0.005
         self.eps_z = eps
         self.lr_p = lr
         self.eps_p = eps
-        self.lr_e = lr*0.1
+        self.lr_e = lr#*0.1
         self.eps_e = eps
         self.lr_ro = lr
         self.eps_ro = eps
@@ -300,8 +300,8 @@ class MetaLearner(object):
 
                 loss = -weighted_mean(ratio * advantages, dim=0,
                     weights=valid_episodes.mask)
-                if np.isnan(loss.sum().item()):
-                    ipdb.set_trace()
+                # if np.isnan(loss.sum().item()):
+                ipdb.set_trace()
                 losses.append(loss)
 
                 mask = valid_episodes.mask
