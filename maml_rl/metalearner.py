@@ -44,33 +44,37 @@ class MetaLearner(object):
         self.gamma = gamma
         self.fast_lr = fast_lr
         self.tau = tau
-        self.lr_r = lr
+        self.lr_r = lr#*10
         self.eps_r = eps
-        self.lr_z = lr*0.1#*0.005
+        self.lr_z = lr*0.05#*0.005
         self.eps_z = eps
         self.lr_p = lr
         self.eps_p = eps
-        self.lr_e = lr#*0.1
+        self.lr_e = lr*0.1
         self.eps_e = eps
         self.lr_ro = lr
         self.eps_ro = eps
         self.embed_size = embed_size
         self.alpha = 5e-8
         self.clip = 0.5
+        self.clip_param = 0.2
         if z_old is None:
             self.z_old = nn.Parameter(torch.zeros((1,embed_size)))
             nn.init.xavier_uniform_(self.z_old)
         else:
             self.z_old = nn.Parameter(z_old)
-        
+
         self.to(device)
         self.z_optimizer = optim.Adam([self.z_old], lr=self.lr_z, eps=self.eps_z)
         self.reward_optimizer = optim.Adam(self.reward_net.parameters(), lr=self.lr_r, eps=self.eps_r)
         self.policy_optimizer = optim.Adam(self.policy.parameters(), lr=self.lr_p, eps=self.eps_p)
         self.exp_optimizer = optim.Adam(self.exp_policy.parameters(), lr=self.lr_e, eps=self.eps_e)
         self.reward_outer_optimizer = optim.Adam(self.reward_net_outer.parameters(), lr=self.lr_ro, eps=self.eps_ro)
-        # lr_e_lambda = lambda epoch: 0.995
-        # self.exp_optimizer_scheduler = optim.lr_scheduler.LambdaLR(self.exp_optimizer, lr_e_lambda)
+        lr_e_lambda = lambda epoch: 0.995
+        self.exp_optimizer_scheduler = optim.lr_scheduler.ReduceLROnPlateau(self.exp_optimizer, 'min', patience=50, factor=0.5, min_lr = self.lr_e*0.01)
+        self.z_optimizer_scheduler = optim.lr_scheduler.ReduceLROnPlateau(self.z_optimizer, 'min', patience=50, factor=0.5, min_lr = self.lr_z*0.01)
+        self.policy_optimizer_scheduler = optim.lr_scheduler.ReduceLROnPlateau(self.policy_optimizer, 'min', patience=50, factor=0.5, min_lr = self.lr_p*0.01)
+        self.reward_optimizer_scheduler = optim.lr_scheduler.ReduceLROnPlateau(self.reward_optimizer, 'min', patience=50, factor=0.5, min_lr = self.lr_r*0.01)
         self.check=False       
         self.iter = 0
         self.dice_wts = []
@@ -111,7 +115,9 @@ class MetaLearner(object):
             # if (exp_log_probs_diff==exp_log_probs_non_diff).float().mean().item()!=1:
             #     ipdb.set_trace()
             # TODO: This might be high variance so reconsider it later maybe.
-            dice_wts = torch.exp(exp_log_probs_diff.sum(dim=2) - exp_log_probs_diff.sum(dim=2).detach())  
+            dice_wts = torch.exp(exp_log_probs_diff.sum(dim=2) 
+                                #- exp_log_probs_diff.sum(dim=2).detach())  
+                                 - exp_log_probs_non_diff.sum(dim=2))
             self.dice_wts.append(dice_wts)
             self.dice_wts_detached.append(dice_wts.detach())
             self.dice_wts_detached[-1].requires_grad_()
@@ -292,16 +298,21 @@ class MetaLearner(object):
                     weights=valid_episodes.mask)
 
                 log_ratio = (pi.log_prob(valid_episodes.actions)
-                    - old_pi.log_prob(valid_episodes.actions))
+                    # - old_pi.log_prob(valid_episodes.actions))
+                      - valid_episodes.action_probs)
                 if log_ratio.dim() > 2:
                     log_ratio = torch.sum(log_ratio, dim=2)
                 ratio = torch.exp(log_ratio)
                 self.baseline_exp+=torch.log(valid_episodes.rewards.sum(0)+1)
 
-                loss = -weighted_mean(ratio * advantages, dim=0,
+                surr1 = ratio * advantages
+                surr2 = torch.clamp(ratio, 1.0 - self.clip_param,
+                                    1.0 + self.clip_param) * advantages
+                action_loss = torch.min(surr1, surr2)#.mean()
+                loss = -weighted_mean(action_loss, dim=0,
                     weights=valid_episodes.mask)
                 # if np.isnan(loss.sum().item()):
-                ipdb.set_trace()
+                # ipdb.set_trace()
                 losses.append(loss)
 
                 mask = valid_episodes.mask
@@ -346,15 +357,16 @@ class MetaLearner(object):
         """Meta-optimization step (ie. update of the initial parameters), based 
         on Trust Region Policy Optimization (TRPO, [4]).
         """
-        self.check = True
-        old_loss, _, reward_loss_after, reward_loss_before, reward_loss_inner, old_pis = self.surrogate_loss_rewardnet(episodes, exp_update='dice')
-        # old_loss=0
-        # reward_loss_after, reward_loss_before= self.test_func(episodes)
-        
-        # TODO: Depcretaed, won't work. Fix the TODO below first.
-        # self.conjugate_gradient_update(episodes, max_kl, cg_iters, cg_damping,            
-        #                                         ls_max_steps, ls_backtrack_ratio)
-        grad_vals = self.gradient_descent_update(old_loss*10,reward_loss_after*1, reward_loss_inner, episodes)
+        for j in range(5):
+            self.check = True
+            old_loss, _, reward_loss_after, reward_loss_before, reward_loss_inner, old_pis = self.surrogate_loss_rewardnet(episodes, exp_update='dice')
+            # old_loss=0
+            # reward_loss_after, reward_loss_before= self.test_func(episodes)
+            
+            # TODO: Depcretaed, won't work. Fix the TODO below first.
+            # self.conjugate_gradient_update(episodes, max_kl, cg_iters, cg_damping,            
+            #                                         ls_max_steps, ls_backtrack_ratio)
+            grad_vals = self.gradient_descent_update(old_loss*10,reward_loss_after*1, reward_loss_inner, episodes)
         return ((reward_loss_before, reward_loss_after)), old_loss, grad_vals
 
     def gradient_descent_update(self, old_loss, reward_loss, reward_loss_inner, episodes):
@@ -363,6 +375,10 @@ class MetaLearner(object):
         self.reward_outer_optimizer.zero_grad()
         self.policy_optimizer.zero_grad()
         self.exp_optimizer.zero_grad()
+        self.exp_optimizer_scheduler.step(old_loss)
+        self.reward_optimizer_scheduler.step(old_loss)
+        self.policy_optimizer_scheduler.step(old_loss)
+        self.z_optimizer_scheduler.step(old_loss)
         self.iter+=1
         wts = math.exp(-self.iter/5)
         wts1 = 1
@@ -391,7 +407,10 @@ class MetaLearner(object):
             advantages, returns = self.gae(values,normalized_rewards, tau=self.tau)
             advantages = weighted_normalize(advantages)#, weights=valid_episodes.mask)  #### TODO: Perform experiments with normalized advantages as well.
             ratio = self.dice_wts[i]
-            action_loss = -ratio*advantages.detach()
+            surr1 = ratio * advantages.detach()
+            surr2 = torch.clamp(ratio, 1.0 - self.clip_param,
+                                1.0 + self.clip_param) * advantages.detach()
+            action_loss = -torch.min(surr1, surr2)
             dice_wts_grad.append(action_loss)
         dice_grad_mean = 0
         # ipdb.set_trace()
@@ -408,6 +427,7 @@ class MetaLearner(object):
             # ipdb.set_trace()
             self.exp_policy.layer_pre1.weight.grad=torch.zeros_like(self.exp_policy.layer_pre1.weight)
         else:
+            # ipdb.set_trace()
             dice_grad_mean.backward()
             if np.isnan(self.exp_policy.layer_pre1.weight.grad.abs().mean().item()):
                 self.exp_policy.layer_pre1.weight.grad=torch.zeros_like(self.exp_policy.layer_pre1.weight)
