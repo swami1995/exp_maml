@@ -46,7 +46,7 @@ class MetaLearner(object):
         self.tau = tau
         self.lr_r = lr#*10
         self.eps_r = eps
-        self.lr_z = lr*0.05#*0.005
+        self.lr_z = lr*0.005#*0.005
         self.eps_z = eps
         self.lr_p = lr
         self.eps_p = eps
@@ -71,10 +71,13 @@ class MetaLearner(object):
         self.exp_optimizer = optim.Adam(self.exp_policy.parameters(), lr=self.lr_e, eps=self.eps_e)
         self.reward_outer_optimizer = optim.Adam(self.reward_net_outer.parameters(), lr=self.lr_ro, eps=self.eps_ro)
         lr_e_lambda = lambda epoch: 0.995
-        self.exp_optimizer_scheduler = optim.lr_scheduler.ReduceLROnPlateau(self.exp_optimizer, 'min', patience=50, factor=0.5, min_lr = self.lr_e*0.01)
-        self.z_optimizer_scheduler = optim.lr_scheduler.ReduceLROnPlateau(self.z_optimizer, 'min', patience=50, factor=0.5, min_lr = self.lr_z*0.01)
-        self.policy_optimizer_scheduler = optim.lr_scheduler.ReduceLROnPlateau(self.policy_optimizer, 'min', patience=50, factor=0.5, min_lr = self.lr_p*0.01)
-        self.reward_optimizer_scheduler = optim.lr_scheduler.ReduceLROnPlateau(self.reward_optimizer, 'min', patience=50, factor=0.5, min_lr = self.lr_r*0.01)
+        patience = 300
+        min_lr_factor = 0.1
+        factor = 0.95
+        self.exp_optimizer_scheduler = optim.lr_scheduler.ReduceLROnPlateau(self.exp_optimizer, 'min', patience=patience, factor=factor, min_lr = self.lr_e*min_lr_factor)
+        self.z_optimizer_scheduler = optim.lr_scheduler.ReduceLROnPlateau(self.z_optimizer, 'min', patience=patience, factor=factor, min_lr = self.lr_z*min_lr_factor)
+        self.policy_optimizer_scheduler = optim.lr_scheduler.ReduceLROnPlateau(self.policy_optimizer, 'min', patience=patience, factor=factor, min_lr = self.lr_p*min_lr_factor)
+        self.reward_optimizer_scheduler = optim.lr_scheduler.ReduceLROnPlateau(self.reward_optimizer, 'min', patience=patience, factor=factor, min_lr = self.lr_r*min_lr_factor)
         self.check=False       
         self.iter = 0
         self.dice_wts = []
@@ -118,6 +121,7 @@ class MetaLearner(object):
             dice_wts = torch.exp(exp_log_probs_diff.sum(dim=2) 
                                 #- exp_log_probs_diff.sum(dim=2).detach())  
                                  - exp_log_probs_non_diff.sum(dim=2))
+            # ipdb.set_trace()
             self.dice_wts.append(dice_wts)
             self.dice_wts_detached.append(dice_wts.detach())
             self.dice_wts_detached[-1].requires_grad_()
@@ -399,14 +403,15 @@ class MetaLearner(object):
             rewards_exp.append(self.fast_lr*torch.sum(dice_grad[i].unsqueeze(0)*self.z_grad_ph[i][0], dim=-1)) #maybe normalize
             # reward_detatched = dice_grad_detached[i]
             normalized_rewards = weighted_normalize(rewards_exp[-1], no_mean=True)
-            returns = self.get_returns(normalized_rewards).detach()
+            returns = self.get_returns(normalized_rewards, train_episodes.mask).detach()
             self.exp_baseline.fit(train_episodes, returns)
             values = self.exp_baseline(train_episodes)
 
             # advantages = returns - values.squeeze()
             advantages, returns = self.gae(values,normalized_rewards, tau=self.tau)
-            advantages = weighted_normalize(advantages)#, weights=valid_episodes.mask)  #### TODO: Perform experiments with normalized advantages as well.
+            advantages = weighted_normalize(advantages, weights=train_episodes.mask)  #### TODO: Perform experiments with normalized advantages as well.
             ratio = self.dice_wts[i]
+            # ipdb.set_trace()
             surr1 = ratio * advantages.detach()
             surr2 = torch.clamp(ratio, 1.0 - self.clip_param,
                                 1.0 + self.clip_param) * advantages.detach()
@@ -538,12 +543,12 @@ class MetaLearner(object):
         self.z = self.z_old.to(device, **kwargs)
         self.device = device
 
-    def get_returns(self, rewards):
+    def get_returns(self, rewards, mask):
         return_ = torch.zeros(rewards.shape[1]).to(self.device)
         returns = torch.zeros(rewards.shape[:2]).to(self.device)
         rewards = rewards#.cpu().numpy()
         for i in range(len(rewards) - 1, -1, -1):
-            return_ = self.gamma * return_ + rewards[i].detach()
+            return_ = self.gamma * return_ + rewards[i] * mask[i]
             returns[i] = return_
         return returns#torch.from_numpy(returns).to(self.device)
 
