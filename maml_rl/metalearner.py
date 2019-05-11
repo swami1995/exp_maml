@@ -108,7 +108,7 @@ class MetaLearner(object):
 
         # topkthvalue = torch.kthvalue(loss.cpu(), 9*rewards_pred.shape[0]//10, dim=0, keepdim=True)
         # loss = torch.ge(loss, topkthvalue.to(self.device)).float()*loss
-        exp_pi = self.exp_policy(states, self.z_exp.detach())#self.z.detach()) 
+        exp_pi = self.exp_policy(states, self.z_exp.detach())
         exp_log_probs_non_diff = episodes.action_probs
         exp_log_probs_diff = torch.zeros_like(exp_log_probs_non_diff)
         self.exp_entropy.append(exp_pi.entropy().sum(dim=2))
@@ -226,7 +226,7 @@ class MetaLearner(object):
             self.baseline.fit(valid_episodes)
             # old_pi = curr_params
             with torch.set_grad_enabled(old_pi is None):
-                pi = self.policy(valid_episodes.observations,updated_params['z'])#, params=updated_params)
+                pi = self.policy(valid_episodes.observations, updated_params['z'])
                 pis.append(detach_distribution(pi))
 
                 if old_pi is None:
@@ -343,13 +343,11 @@ class MetaLearner(object):
         on Trust Region Policy Optimization (TRPO, [4]).
         """
         for j in range(5):
-            old_loss, _, reward_loss_after, reward_loss_before, reward_loss_inner, old_pis = self.surrogate_loss_rewardnet(episodes, exp_update='dice')
+            old_loss, _, reward_loss_after, reward_loss_before, reward_loss_inner, old_pis = self.surrogate_loss_rewardnet(
+                episodes, exp_update='dice')
             # old_loss=0
             # reward_loss_after, reward_loss_before= self.test_func(episodes)
             
-            # TODO: Depcretaed, won't work. Fix the TODO below first.
-            # self.conjugate_gradient_update(episodes, max_kl, cg_iters, cg_damping,            
-            #                                         ls_max_steps, ls_backtrack_ratio)
             grad_vals = self.gradient_descent_update(old_loss*10,reward_loss_after*1, reward_loss_inner, episodes)
         return ((reward_loss_before, reward_loss_after)), old_loss, grad_vals
 
