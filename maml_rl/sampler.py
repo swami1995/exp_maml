@@ -24,7 +24,7 @@ class BatchSampler(object):
         self._env = gym.make(env_name)
 
     def sample(self, policy, task, params=None, gamma=0.95, device='cpu'):
-        episodes = BatchEpisodes(batch_size=self.batch_size, task=task, gamma=gamma, device=device)
+        episodes = BatchEpisodes(batch_size=self.batch_size, task=task, corners=None, gamma=gamma, device=device)
         for i in range(self.batch_size):
             self.queue.put(i)
         for _ in range(self.num_workers):

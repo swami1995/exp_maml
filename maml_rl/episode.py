@@ -4,7 +4,7 @@ import torch.nn.functional as F
 
 
 class BatchEpisodes(object):
-    def __init__(self, batch_size, task, gamma=0.95, device='cpu'):
+    def __init__(self, batch_size, task, corners, gamma=0.95, device='cpu'):
         self.batch_size = batch_size
         self.gamma = gamma
         self.device = device
@@ -22,7 +22,10 @@ class BatchEpisodes(object):
         self._returns = None
         self._mask = None
         self._task = task
-        self.corners = [np.array([-2,-2]), np.array([2,-2]), np.array([-2,2]), np.array([2, 2])]
+        if corners is not None:
+            self.corners = corners
+        else:
+            self.corners = [np.array([-2,-2]), np.array([2,-2]), np.array([-2,2]), np.array([2, 2])]
         self._task_id = np.argmax(task==self.corners)
 
     @property

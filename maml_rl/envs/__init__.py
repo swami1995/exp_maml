@@ -78,7 +78,12 @@ register(
     '2DPointEnvCorner-v1',
     entry_point='maml_rl.envs.point_envs.point_env_2d_momentum:MetaPointEnvMomentum',
     max_episode_steps=100
+)
 
+register(
+    '2DPointEnvCustom-v1',
+    entry_point='maml_rl.envs.point_envs.point_env_2d_custom:MetaPointEnvCustom',
+    max_episode_steps=100
 )
 
 # Mujoco Envs
@@ -87,8 +92,8 @@ register(
 register(
     'AntRandDirecEnv-v1',
     entry_point='maml_rl.envs.utils:mujoco_wrapper',
-    kwargs={'entry_point': 'maml_rl.envs.mujoco_envs.ant_rand_direc:AntRandDirecEnv', 'promp_env': True},
-    max_episode_steps=200
+    kwargs={'entry_point': 'maml_rl.envs.mujoco_envs.ant_rand_direc:AntRandDirecEnv'},#, 'promp_env': True},
+    max_episode_steps=100
 )
 
 register(
@@ -108,8 +113,8 @@ register(
 register(
     'HalfCheetahRandDirecEnv-v1',
     entry_point='maml_rl.envs.utils:mujoco_wrapper',
-    kwargs={'entry_point': 'maml_rl.envs.mujoco_envs.half_cheetah_rand_direc:HalfCheetahRandDirecEnv', 'promp_env': True},
-    max_episode_steps=200
+    kwargs={'entry_point': 'maml_rl.envs.mujoco_envs.half_cheetah_rand_direc:HalfCheetahRandDirecEnv'},#, 'promp_env': True},
+    max_episode_steps=100
 )
 
 register(

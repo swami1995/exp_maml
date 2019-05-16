@@ -64,14 +64,17 @@ def get_args():
         help='device type')
     parser.add_argument('--num-updates', type=int, default=1,
         help='number of gradient steps to be taken')
+    parser.add_argument('--num-updates-outer', type=int, default=5, help='number outer loop updates')
     # logging
     parser.add_argument('--logdir', default='logs')
     parser.add_argument('--savedir', default='saves')
     parser.add_argument('--save-every', default=20, type=int)
-    parser.add_argument('--test', action='store_true', default='do not log anything')
-    parser.add_argument('--algo', default='a2c', help='{ppo, a2c}')
+    parser.add_argument('--test', action='store_true', help='do not log anything')
+    parser.add_argument('--algo', default='ppo', help='{ppo, a2c, trpo}')
     parser.add_argument('--emaml', action='store_true', help='run emaml')
+    parser.add_argument('--n-exp', default=5, type=int, help='number of exploration traj to plot')
+    parser.add_argument('--baseline-type', default='lin', type=str, help='Exploration baseline : {lin, nn}')
 
     args = parser.parse_args()
-
+    args.n_exp = min(args.n_exp, args.fast_batch_size)
     return args

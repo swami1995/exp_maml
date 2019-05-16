@@ -6,9 +6,10 @@ import sys
 import matplotlib.pyplot as plt
 import shutil 
 import datetime
+import ipdb
 
 from maml_rl.metalearner import MetaLearner
-from maml_rl.policies import CategoricalMLPPolicy, NormalMLPPolicy, RewardNetMLP
+from maml_rl.policies import CategoricalMLPPolicy, NormalMLPPolicy, RewardNetMLP, ValueNetMLP
 from maml_rl.baseline import LinearFeatureBaseline
 from maml_rl.sampler import BatchSampler
 from maml_rl.envs.point_envs.point_env_2d_corner import MetaPointEnvCorner
@@ -23,7 +24,7 @@ def total_rewards(episodes_rewards, aggregation=torch.mean):
     return rewards.item()
 
 
-def plotting(episodes, batch, save_folder, n):
+def plotting(episodes, batch, save_folder, n, n_exp):
     for i in range(n):
         train_ep = [episodes[i][0]]
         val_ep = episodes[i][1]
@@ -32,13 +33,13 @@ def plotting(episodes, batch, save_folder, n):
         corners = np.array([np.array([-2,-2]), np.array([2,-2]), np.array([-2,2]), np.array([2, 2])])
         # cmap = cm.get_cmap('PiYG', len(train_ep)+1)
         for j in range(len(train_ep)):
-            for k in range(5):
+            for k in range(n_exp):
                 train_obs = train_ep[j].observations[:,k].cpu().numpy()
-                train_obs = np.maximum(train_obs, -4)
-                train_obs = np.minimum(train_obs, 4)
+                # train_obs = np.maximum(train_obs, -4)
+                # train_obs = np.minimum(train_obs, 4)
                 plt.plot(train_obs[:,0], train_obs[:,1], label='exploring agent'+str(j)+str(k))
-        val_obs = np.maximum(val_obs, -4)
-        val_obs = np.minimum(val_obs, 4)
+        # val_obs = np.maximum(val_obs, -4)
+        # val_obs = np.minimum(val_obs, 4)
         plt.plot(val_obs[:,0], val_obs[:,1], label='trained agent')
         plt.legend()
         plt.scatter(corners[:,0], corners[:,1], s=10, color='g')
@@ -51,7 +52,7 @@ def plotting(episodes, batch, save_folder, n):
 def main(args):
     continuous_actions = (args.env_name in ['AntVel-v1', 'AntDir-v1',
         'AntPos-v0', 'HalfCheetahVel-v1', 'HalfCheetahDir-v1',
-        '2DNavigation-v0', '2DPointEnvCorner-v0', '2DPointEnvCorner-v1',
+        '2DNavigation-v0', '2DPointEnvCorner-v0', '2DPointEnvCorner-v1', '2DPointEnvCustom-v1',
         'AntRandDirecEnv-v1', 'AntRandDirec2DEnv-v1', 'AntRandGoalEnv-v1', 'HalfCheetahRandDirecEnv-v1',
         'HalfCheetahRandVelEnv-v1', 'HumanoidRandDirecEnv-v1', 'HumanoidRandDirec2DEnv-v1'])
 
@@ -61,7 +62,8 @@ def main(args):
         if os.path.exists(save_folder):
             print('Save folder already exists! Enter')
             text = 'c (rename the existing directory with _old and continue)\n' + \
-                   's (stop)!\ndel (delete existing dir): '
+                   's (stop)!\ndel (delete existing dir): \n' + \
+                   'i (ignore and overwrite)'
             ch = input(text)
                         
             if ch == 's':
@@ -72,6 +74,8 @@ def main(args):
             elif ch == 'del':
                 shutil.rmtree(save_folder)
                 shutil.rmtree(log_folder)
+            elif ch=='i':
+                pass
             else:
                 raise NotImplementedError('Unknown input')
         if not os.path.exists(save_folder):
@@ -87,10 +91,10 @@ def main(args):
             json.dump(config, f, indent=2)
 
     # save script
-    # os.system("mkdir "+save_folder+'/code')
-    # os.system("cp -r *.py "+save_folder+'/code/')
-    # os.system("cp -r maml_rl "+save_folder+'/code/')
-    # print("Models saved in :", save_folder)
+    os.system("mkdir "+save_folder+'/code')
+    os.system("cp -r *.py "+save_folder+'/code/')
+    os.system("cp -r maml_rl "+save_folder+'/code/')
+    print("Models saved in :", save_folder)
 
     start = datetime.datetime.now()
     sampler = BatchSampler(args.env_name, batch_size=args.fast_batch_size,
@@ -137,11 +141,16 @@ def main(args):
         args.embed_size,
         hidden_sizes_pre_embedding=(args.hidden_size,) * args.num_layers_pre,
         hidden_sizes_post_embedding=(args.hidden_size,) * args.num_layers_post)
+    if args.baseline_type=='nn':
+        exp_baseline = ValueNetMLP(int(np.prod(sampler.envs.observation_space.shape)),
+            hidden_sizes_pre_embedding=(args.hidden_size,) * args.num_layers_pre)
+        exp_baseline_targ = ValueNetMLP(int(np.prod(sampler.envs.observation_space.shape)),
+            hidden_sizes_pre_embedding=(args.hidden_size,) * args.num_layers_pre)
+    elif args.baseline_type=='lin':
+        exp_baseline = LinearFeatureBaseline(int(np.prod(sampler.envs.observation_space.shape)))
+        exp_baseline_targ = exp_baseline
 
     baseline = LinearFeatureBaseline(
-        int(np.prod(sampler.envs.observation_space.shape)))
-
-    exp_baseline = LinearFeatureBaseline(
         int(np.prod(sampler.envs.observation_space.shape)))
     
     if args.load_dir is not None:
@@ -158,9 +167,9 @@ def main(args):
         start_batch = 0
         z_old = None
         
-    metalearner = MetaLearner(sampler, policy, exp_policy, baseline, exp_baseline, reward_net, reward_net_outer, z_old,
-                              embed_size=args.embed_size, gamma=args.gamma, fast_lr=args.fast_lr, tau=args.tau,
-                              lr=args.exp_lr, eps=args.exp_eps, device=args.device, algo=args.algo, use_emaml=args.emaml)
+    metalearner = MetaLearner(sampler, policy, exp_policy, baseline, exp_baseline, reward_net, reward_net_outer, exp_baseline_targ, z_old, 
+                              args.baseline_type, embed_size=args.embed_size, gamma=args.gamma, fast_lr=args.fast_lr, tau=args.tau, lr=args.exp_lr, 
+                              eps=args.exp_eps, device=args.device, algo=args.algo, use_emaml=args.emaml, num_updates_outer=args.num_updates_outer)
     
     best_reward_after = -40000
     for batch in range(start_batch+1,args.num_batches):
@@ -169,6 +178,7 @@ def main(args):
         r_loss, pg_loss, grad_vals = metalearner.step(episodes, max_kl=args.max_kl, cg_iters=args.cg_iters,
             cg_damping=args.cg_damping, ls_max_steps=args.ls_max_steps,
             ls_backtrack_ratio=args.ls_backtrack_ratio)
+        metalearner.update_targs_value()
 
         before_update_reward = total_rewards([ep.rewards for ep, _ in episodes])
         after_update_reward = total_rewards([ep.rewards for _, ep in episodes])
@@ -196,6 +206,7 @@ def main(args):
             writer.add_scalar('grad_vals/exp_policy', grad_vals[2], batch)
             writer.add_scalar('grad_vals/reward_net', grad_vals[3], batch)
             writer.add_scalar('grad_vals/reward_net_outer', grad_vals[4], batch)
+            writer.add_scalar('grad_vals/kl_grads', grad_vals[5], batch)
 
             # Save policy network
             if batch%args.save_every==0 or after_update_reward > best_reward_after:
@@ -217,8 +228,8 @@ def main(args):
 
                 best_reward_after = after_update_reward
                 # Plotting figure
-                if args.env_name in ['2DNavigation-v0', '2DPointEnvCorner-v0', '2DPointEnvCorner-v1']:
-                    plotting(episodes, batch, save_folder, args.num_plots)
+                if args.env_name in ['2DNavigation-v0', '2DPointEnvCorner-v0', '2DPointEnvCorner-v1', '2DPointEnvCustom-v1']:
+                    plotting(episodes, batch, save_folder, args.num_plots, args.n_exp)
 
 
 if __name__ == '__main__':

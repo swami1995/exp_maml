@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn
-
+import ipdb
 
 class LinearFeatureBaseline(nn.Module):
     """Linear baseline based on handcrafted features, as described in [1] 
@@ -41,6 +41,7 @@ class LinearFeatureBaseline(nn.Module):
         reg_coeff = self._reg_coeff
         eye = torch.eye(self.feature_size, dtype=torch.float32,
             device=self.linear.weight.device)
+        
         for _ in range(5):
             try:
                 coeffs, _ = torch.gels(
