@@ -19,8 +19,7 @@ class BatchSampler(object):
         self.num_workers = num_workers
         
         self.queue = mp.Queue()
-        self.envs = SubprocVecEnv([make_env(env_name) for _ in range(num_workers)],
-            queue=self.queue)
+        self.envs = SubprocVecEnv([make_env(env_name) for _ in range(num_workers)], queue=self.queue)
         self._env = gym.make(env_name)
 
     def sample(self, policy, task, params=None, gamma=0.95, device='cpu'):
@@ -34,11 +33,11 @@ class BatchSampler(object):
         while (not all(dones)) or (not self.queue.empty()):
             with torch.no_grad():
                 observations_tensor = torch.from_numpy(observations).type(torch.FloatTensor).to(device=device)
-                # pdb.set_trace()
                 action_probs_tensor = policy(observations_tensor, params['z'])
                 actions_tensor = action_probs_tensor.sample()
                 actions = actions_tensor.cpu().numpy()
-                action_probs = action_probs_tensor.log_prob(actions_tensor).detach().cpu().numpy()   # Not sure need to check indexing
+                # TODO: Not sure need to check indexing
+                action_probs = action_probs_tensor.log_prob(actions_tensor).detach().cpu().numpy()   
             new_observations, rewards, dones, new_batch_ids, _ = self.envs.step(actions)
             episodes.append(observations, actions, rewards, batch_ids, action_probs)
             observations, batch_ids = new_observations, new_batch_ids

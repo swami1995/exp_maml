@@ -97,8 +97,7 @@ def main(args):
     print("Models saved in :", save_folder)
 
     start = datetime.datetime.now()
-    sampler = BatchSampler(args.env_name, batch_size=args.fast_batch_size,
-                           num_workers=args.num_workers)
+    sampler = BatchSampler(args.env_name, batch_size=args.fast_batch_size, num_workers=args.num_workers)
     if continuous_actions:
         policy = NormalMLPPolicy(
             int(np.prod(sampler.envs.observation_space.shape)),
@@ -150,8 +149,7 @@ def main(args):
         exp_baseline = LinearFeatureBaseline(int(np.prod(sampler.envs.observation_space.shape)))
         exp_baseline_targ = exp_baseline
 
-    baseline = LinearFeatureBaseline(
-        int(np.prod(sampler.envs.observation_space.shape)))
+    baseline = LinearFeatureBaseline(int(np.prod(sampler.envs.observation_space.shape)))
     
     if args.load_dir is not None:
         z_old = torch.zeros((1,args.embed_size))
@@ -210,20 +208,15 @@ def main(args):
 
             # Save policy network
             if batch%args.save_every==0 or after_update_reward > best_reward_after:
-                with open(os.path.join(save_folder,
-                        'policy-{0}.pt'.format(batch)), 'wb') as f:
+                with open(os.path.join(save_folder, 'policy-{0}.pt'.format(batch)), 'wb') as f:
                     torch.save(policy.state_dict(), f)
-                with open(os.path.join(save_folder,
-                        'policy-{0}-exp.pt'.format(batch)), 'wb') as f:
+                with open(os.path.join(save_folder, 'policy-{0}-exp.pt'.format(batch)), 'wb') as f:
                     torch.save(exp_policy.state_dict(), f)
-                with open(os.path.join(save_folder,
-                        'reward-{0}.pt'.format(batch)), 'wb') as f:
+                with open(os.path.join(save_folder, 'reward-{0}.pt'.format(batch)), 'wb') as f:
                     torch.save(reward_net.state_dict(), f)
-                with open(os.path.join(save_folder,
-                        'reward_outer-{0}.pt'.format(batch)), 'wb') as f:
+                with open(os.path.join(save_folder, 'reward_outer-{0}.pt'.format(batch)), 'wb') as f:
                     torch.save(reward_net_outer.state_dict(), f)
-                with open(os.path.join(save_folder,
-                        'z_old-{0}.pt'.format(batch)), 'wb') as f:
+                with open(os.path.join(save_folder, 'z_old-{0}.pt'.format(batch)), 'wb') as f:
                     torch.save({'z_old':metalearner.z_old}, f)
 
                 best_reward_after = after_update_reward
