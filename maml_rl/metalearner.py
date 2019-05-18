@@ -52,6 +52,7 @@ class MetaLearner(object):
         self.moving_normalize = True
         self.update_exp_only = False
         self.scale_type = 'none' # 'none' or 'norm' or 'sum'
+        self.M_type = 'rewards' # 'rewards' or 'returns'
 
         self.lr_r = lr
         self.eps_r = eps
@@ -59,7 +60,7 @@ class MetaLearner(object):
         self.eps_z = eps
         self.lr_p = lr
         self.eps_p = eps
-        self.lr_e = lr
+        self.lr_e = lr*0.1
         self.eps_e = eps
         self.lr_ro = lr
         self.eps_ro = eps
@@ -118,7 +119,10 @@ class MetaLearner(object):
         loss is REINFORCE with baseline [2], computed on advantages estimated 
         with Generalized Advantage Estimation (GAE, [3]).
         """
-        states, actions, rewards = episodes.observations, episodes.actions, episodes.returns
+        if self.M_type=='returns':
+            states, actions, rewards = episodes.observations, episodes.actions, episodes.returns
+        elif self.M_type=='rewards':
+            states, actions, rewards = episodes.observations, episodes.actions, episodes.rewards
         rewards_pred, self.z_ph = self.reward_net(states,actions,self.z, ph=True)
         rewards_pred = rewards_pred.squeeze(-1)
         loss = (rewards - rewards_pred)**2
@@ -292,7 +296,10 @@ class MetaLearner(object):
             self.baseline.fit(valid_episodes)
             # old_pi = curr_params
             with torch.no_grad():
-                states, actions, rewards = valid_episodes.observations, valid_episodes.actions, valid_episodes.returns
+                if self.M_type=='returns':
+                    states, actions, rewards = valid_episodes.observations, valid_episodes.actions, valid_episodes.returns
+                elif self.M_type=='rewards':
+                    states, actions, rewards = valid_episodes.observations, valid_episodes.actions, valid_episodes.rewards
                 rewards_pred = self.reward_net_outer(states,actions,curr_params['z']).squeeze(-1)
                 reward_loss = (rewards - rewards_pred)**2
                 reward_loss_before = reward_loss.mean()
@@ -315,7 +322,7 @@ class MetaLearner(object):
                     log_ratio = torch.sum(log_ratio, dim=2)
                 ratio = torch.exp(log_ratio)
 
-                self.baseline_exp = valid_episodes.rewards.sum(0)
+                self.baseline_exp += valid_episodes.rewards.sum(0)
                 # self.baseline_exp+=torch.log(valid_episodes.rewards.sum(0)+1)
 
                 surr1 = ratio * advantages
@@ -331,7 +338,10 @@ class MetaLearner(object):
                 kls.append(kl)
 
                 # Reward Objective
-                states, actions, rewards = valid_episodes.observations, valid_episodes.actions, valid_episodes.returns
+                if self.M_type=='returns':
+                    states, actions, rewards = valid_episodes.observations, valid_episodes.actions, valid_episodes.returns
+                elif self.M_type=='rewards':
+                    states, actions, rewards = valid_episodes.observations, valid_episodes.actions, valid_episodes.rewards
                 rewards_pred = self.reward_net_outer(states,actions,updated_params['z'].detach()).squeeze(-1)
                 reward_loss = (rewards - rewards_pred)**2
                 reward_losses.append(reward_loss.mean())

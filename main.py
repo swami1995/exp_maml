@@ -1,5 +1,6 @@
 import numpy as np
 import torch
+import torch.nn.functional as F
 import json
 import os
 import sys
@@ -97,6 +98,13 @@ def main(args):
         print("Models saved in :", save_folder)
 
     start = datetime.datetime.now()
+    if args.nonlinearity=='relu':
+        nonlinearity = F.relu
+    elif args.nonlinearity=='tanh':
+        nonlinearity = torch.tanh
+    elif args.nonlinearity=='sigmoid':
+        nonlinearity = F.sigmoid
+
     sampler = BatchSampler(args.env_name, batch_size=args.fast_batch_size, num_workers=args.num_workers)
     if continuous_actions:
         policy = NormalMLPPolicy(
@@ -104,28 +112,32 @@ def main(args):
             int(np.prod(sampler.envs.action_space.shape)),
             args.embed_size,
             hidden_sizes_pre_embedding=(args.hidden_size,) * args.num_layers_pre,
-            hidden_sizes_post_embedding=(args.hidden_size,) * args.num_layers_post)
+            hidden_sizes_post_embedding=(args.hidden_size,) * args.num_layers_post, 
+            nonlinearity=nonlinearity)
         # exploration policy
         exp_policy = NormalMLPPolicy(
             int(np.prod(sampler.envs.observation_space.shape)),
             int(np.prod(sampler.envs.action_space.shape)),
             args.embed_size,
             hidden_sizes_pre_embedding=(args.hidden_size,) * args.num_layers_pre,
-            hidden_sizes_post_embedding=(args.hidden_size,) * args.num_layers_post)
+            hidden_sizes_post_embedding=(args.hidden_size,) * args.num_layers_post, 
+            nonlinearity=nonlinearity)
     else:
         policy = CategoricalMLPPolicy(
             int(np.prod(sampler.envs.observation_space.shape)),
             sampler.envs.action_space.n,
             args.embed_size,
             hidden_sizes_pre_embedding=(args.hidden_size,) * args.num_layers_pre,
-            hidden_sizes_post_embedding=(args.hidden_size,) * args.num_layers_post)
+            hidden_sizes_post_embedding=(args.hidden_size,) * args.num_layers_post, 
+            nonlinearity=nonlinearity)
         # exploration policy
         exp_policy = CategoricalMLPPolicy(
             int(np.prod(sampler.envs.observation_space.shape)),
             sampler.envs.action_space.n,
             args.embed_size,
             hidden_sizes_pre_embedding=(args.hidden_size,) * args.num_layers_pre,
-            hidden_sizes_post_embedding=(args.hidden_size,) * args.num_layers_post)
+            hidden_sizes_post_embedding=(args.hidden_size,) * args.num_layers_post, 
+            nonlinearity=nonlinearity)
     
     # reward prediction network
     if args.reward_net_type == 'input_latent':
@@ -134,29 +146,35 @@ def main(args):
             sampler.envs.action_space.shape[0],
             args.embed_size,
             hidden_sizes_pre_embedding=(args.hidden_size,) * args.num_layers_pre,
-            hidden_sizes_post_embedding=(args.hidden_size,) * args.num_layers_post)
+            hidden_sizes_post_embedding=(args.hidden_size,) * args.num_layers_post, 
+            nonlinearity=nonlinearity)
         reward_net_outer = RewardNetMLP(
             int(np.prod(sampler.envs.observation_space.shape)),
             sampler.envs.action_space.shape[0],
             args.embed_size,
             hidden_sizes_pre_embedding=(args.hidden_size,) * args.num_layers_pre,
-            hidden_sizes_post_embedding=(args.hidden_size,) * args.num_layers_post)
+            hidden_sizes_post_embedding=(args.hidden_size,) * args.num_layers_post, 
+            nonlinearity=nonlinearity)
     elif args.reward_net_type=='output_latent':
         reward_net = RewardNetMLP_shared(
             int(np.prod(sampler.envs.observation_space.shape)),
             sampler.envs.action_space.shape[0],
             args.embed_size,
-            hidden_sizes=(args.hidden_size,) * args.num_layers_pre)
+            hidden_sizes=(args.hidden_size,) * args.num_layers_pre, 
+            nonlinearity=nonlinearity)
         reward_net_outer = RewardNetMLP_shared(
             int(np.prod(sampler.envs.observation_space.shape)),
             sampler.envs.action_space.shape[0],
             args.embed_size,
-            hidden_sizes=(args.hidden_size,) * args.num_layers_pre)
+            hidden_sizes=(args.hidden_size,) * args.num_layers_pre, 
+            nonlinearity=nonlinearity)
     if args.baseline_type=='nn':
         exp_baseline = ValueNetMLP(int(np.prod(sampler.envs.observation_space.shape)),
-            hidden_sizes_pre_embedding=(args.hidden_size,) * args.num_layers_pre)
+            hidden_sizes_pre_embedding=(args.hidden_size,) * args.num_layers_pre, 
+            nonlinearity=nonlinearity)
         exp_baseline_targ = ValueNetMLP(int(np.prod(sampler.envs.observation_space.shape)),
-            hidden_sizes_pre_embedding=(args.hidden_size,) * args.num_layers_pre)
+            hidden_sizes_pre_embedding=(args.hidden_size,) * args.num_layers_pre, 
+            nonlinearity=nonlinearity)
     elif args.baseline_type=='lin':
         exp_baseline = LinearFeatureBaseline(int(np.prod(sampler.envs.observation_space.shape)))
         exp_baseline_targ = exp_baseline

@@ -75,6 +75,7 @@ def get_args():
     parser.add_argument('--n-exp', default=5, type=int, help='number of exploration traj to plot')
     parser.add_argument('--baseline-type', default='lin', type=str, help='Exploration baseline : {lin, nn}')
     parser.add_argument('--reward-net-type', default='input_latent', type=str, help='{input_latent, output_latent}')
+    parser.add_argument('--nonlinearity', default='relu', type=str, help='{relu, tanh, sigmoid}')
 
     args = parser.parse_args()
     args.n_exp = min(args.n_exp, args.fast_batch_size)
