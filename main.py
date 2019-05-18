@@ -9,7 +9,7 @@ import datetime
 import ipdb
 
 from maml_rl.metalearner import MetaLearner
-from maml_rl.policies import CategoricalMLPPolicy, NormalMLPPolicy, RewardNetMLP, ValueNetMLP
+from maml_rl.policies import CategoricalMLPPolicy, NormalMLPPolicy, RewardNetMLP, ValueNetMLP, RewardNetMLP_shared
 from maml_rl.baseline import LinearFeatureBaseline
 from maml_rl.sampler import BatchSampler
 from maml_rl.envs.point_envs.point_env_2d_corner import MetaPointEnvCorner
@@ -90,11 +90,11 @@ def main(args):
             config.update(device=args.device.type)
             json.dump(config, f, indent=2)
 
-    # save script
-    os.system("mkdir "+save_folder+'/code')
-    os.system("cp -r *.py "+save_folder+'/code/')
-    os.system("cp -r maml_rl "+save_folder+'/code/')
-    print("Models saved in :", save_folder)
+        # save script
+        os.system("mkdir "+save_folder+'/code')
+        os.system("cp -r *.py "+save_folder+'/code/')
+        os.system("cp -r maml_rl "+save_folder+'/code/')
+        print("Models saved in :", save_folder)
 
     start = datetime.datetime.now()
     sampler = BatchSampler(args.env_name, batch_size=args.fast_batch_size, num_workers=args.num_workers)
@@ -128,18 +128,30 @@ def main(args):
             hidden_sizes_post_embedding=(args.hidden_size,) * args.num_layers_post)
     
     # reward prediction network
-    reward_net = RewardNetMLP(
-        int(np.prod(sampler.envs.observation_space.shape)),
-        sampler.envs.action_space.shape[0],
-        args.embed_size,
-        hidden_sizes_pre_embedding=(args.hidden_size,) * args.num_layers_pre,
-        hidden_sizes_post_embedding=(args.hidden_size,) * args.num_layers_post)
-    reward_net_outer = RewardNetMLP(
-        int(np.prod(sampler.envs.observation_space.shape)),
-        sampler.envs.action_space.shape[0],
-        args.embed_size,
-        hidden_sizes_pre_embedding=(args.hidden_size,) * args.num_layers_pre,
-        hidden_sizes_post_embedding=(args.hidden_size,) * args.num_layers_post)
+    if args.reward_net_type == 'input_latent':
+        reward_net = RewardNetMLP(
+            int(np.prod(sampler.envs.observation_space.shape)),
+            sampler.envs.action_space.shape[0],
+            args.embed_size,
+            hidden_sizes_pre_embedding=(args.hidden_size,) * args.num_layers_pre,
+            hidden_sizes_post_embedding=(args.hidden_size,) * args.num_layers_post)
+        reward_net_outer = RewardNetMLP(
+            int(np.prod(sampler.envs.observation_space.shape)),
+            sampler.envs.action_space.shape[0],
+            args.embed_size,
+            hidden_sizes_pre_embedding=(args.hidden_size,) * args.num_layers_pre,
+            hidden_sizes_post_embedding=(args.hidden_size,) * args.num_layers_post)
+    elif args.reward_net_type=='output_latent':
+        reward_net = RewardNetMLP_shared(
+            int(np.prod(sampler.envs.observation_space.shape)),
+            sampler.envs.action_space.shape[0],
+            args.embed_size,
+            hidden_sizes=(args.hidden_size,) * args.num_layers_pre)
+        reward_net_outer = RewardNetMLP_shared(
+            int(np.prod(sampler.envs.observation_space.shape)),
+            sampler.envs.action_space.shape[0],
+            args.embed_size,
+            hidden_sizes=(args.hidden_size,) * args.num_layers_pre)
     if args.baseline_type=='nn':
         exp_baseline = ValueNetMLP(int(np.prod(sampler.envs.observation_space.shape)),
             hidden_sizes_pre_embedding=(args.hidden_size,) * args.num_layers_pre)
@@ -161,6 +173,9 @@ def main(args):
         reward_net.load_state_dict(torch.load(load_folder+'reward-{0}.pt'.format(folder_idx[1])))
         z_old.copy_(torch.load(load_folder+'z_old-{0}.pt'.format(folder_idx[1]))['z_old'])
         reward_net_outer.load_state_dict(torch.load(load_folder+'reward_outer-{0}.pt'.format(folder_idx[1])))
+        # if args.baseline_type=='nn':
+        #     exp_baseline.load_state_dict(torch.load(load_folder+'value_net-{0}.pt'.format(folder_idx[1])))
+        #     exp_baseline_targ.load_state_dict(torch.load(load_folder+'value_net_targ-{0}.pt'.format(folder_idx[1])))
     else:
         start_batch = 0
         z_old = None
@@ -218,7 +233,11 @@ def main(args):
                     torch.save(reward_net_outer.state_dict(), f)
                 with open(os.path.join(save_folder, 'z_old-{0}.pt'.format(batch)), 'wb') as f:
                     torch.save({'z_old':metalearner.z_old}, f)
-
+                if args.baseline_type=='nn':
+                    with open(os.path.join(save_folder, 'value_net-{0}.pt'.format(batch)), 'wb') as f:
+                        torch.save(exp_baseline.state_dict(), f)
+                    with open(os.path.join(save_folder, 'value_net_targ-{0}.pt'.format(batch)), 'wb') as f:
+                        torch.save(exp_baseline_targ.state_dict(), f)
                 best_reward_after = after_update_reward
                 # Plotting figure
                 if args.env_name in ['2DNavigation-v0', '2DPointEnvCorner-v0', '2DPointEnvCorner-v1', '2DPointEnvCustom-v1']:

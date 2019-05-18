@@ -45,11 +45,13 @@ class MetaLearner(object):
         self.tau = tau
         self.lamda = 0.1
 
-        self.use_target = use_target ## True
+        self.use_target = use_target ## False
         self.baseline_type = baseline_type ## 'lin'
         self.num_updates_outer = num_updates_outer ## 5
         self.reward_type = 'dice_reward' ## or 'env_reward'
         self.moving_normalize = True
+        self.update_exp_only = False
+        self.scale_type = 'none' # 'none' or 'norm' or 'sum'
 
         self.lr_r = lr
         self.eps_r = eps
@@ -57,7 +59,7 @@ class MetaLearner(object):
         self.eps_z = eps
         self.lr_p = lr
         self.eps_p = eps
-        self.lr_e = lr*0.1
+        self.lr_e = lr
         self.eps_e = eps
         self.lr_ro = lr
         self.eps_ro = eps
@@ -380,10 +382,13 @@ class MetaLearner(object):
         self.reward_outer_optimizer.zero_grad()
         self.policy_optimizer.zero_grad()
         self.exp_optimizer.zero_grad()
+        if self.baseline_type=='nn':
+            self.exp_baseline_optimizer.zero_grad()
         self.exp_optimizer_scheduler.step(old_loss)
         self.reward_optimizer_scheduler.step(old_loss)
         self.policy_optimizer_scheduler.step(old_loss)
         self.z_optimizer_scheduler.step(old_loss)
+        # TODO : Maybe also add exp_baseline scheduler?
         self.iter+=1
         wts = math.exp(-self.iter/5)
         wts1 = 1
@@ -397,6 +402,7 @@ class MetaLearner(object):
         kls = []
         kl_grads = 0.
         value_loss = []
+        test_grads = []
         # if j>4:
         if self.use_emaml:
             for i, (train_episodes, valid_episodes) in enumerate(episodes):
@@ -429,6 +435,9 @@ class MetaLearner(object):
                 # normalized_entropy = weighted_normalize(self.exp_entropy[i])
                 # dice_grad_normalized = weighted_normalize(dice_grad[i]).detach()
                 # returns = - dice_grad_normalized #+ weighted_normalize(train_episodes.rewards) #+ normalized_entropy 
+                mask = train_episodes.mask
+                if train_episodes.actions.dim() > 2:
+                    mask = mask.unsqueeze(2)
                 if self.reward_type == 'dice_reward':
                     rewards_exp.append(self.fast_lr*torch.sum(dice_grad[i].unsqueeze(0)*self.z_grad_ph[i][0], dim=-1)/self.inner_losses[i]) 
                 ### NOTE : The reward depends on other networks (ENV?) hence it changes with time, what modifications to the standard value computations should we make?
@@ -465,6 +474,13 @@ class MetaLearner(object):
                     surr1 = ratio * advantages.detach()
                     surr2 = torch.clamp(ratio, 1.0-self.clip_param, 1.0+self.clip_param) * advantages.detach()
                     action_loss = -torch.min(surr1, surr2)
+                    # if i==0:
+                    #     print(torch.autograd.grad(action_loss.sum(), self.exp_policy.parameters(), retain_graph=True)[1].abs().mean().item())
+                    #     print(torch.autograd.grad(ratio.sum(), self.exp_policy.parameters(), retain_graph=True)[1].abs().mean().item())
+                    #     print(advantages.abs().mean())
+                    #     print(action_loss.abs().mean())
+                    #     print(action_loss.mean())
+                    #     ipdb.set_trace()
                 elif self.algo == 'trpo':
                     surr1 = ratio * advantages.detach()
                     action_loss = -surr1
@@ -478,57 +494,75 @@ class MetaLearner(object):
                         value_loss.append((values.squeeze(-1) - returns.detach()).pow(2).mean(0) * 0.5)
                 # if j==4:
                 #     ipdb.set_trace()
-                mask = train_episodes.mask
-                if train_episodes.actions.dim() > 2:
-                    mask = mask.unsqueeze(2)
                 dice_wts_grad.append(action_loss)
+                test_grads.append(torch.autograd.grad(action_loss.sum(), self.exp_policy.parameters(), retain_graph=True)[1].abs().mean().item())
 
             dice_grad_mean = 0
-            for i in range(len(self.dice_wts)):
-                dice_grad_mean+=dice_wts_grad[i].sum()#/len(self.dice_wts)
-            # scale = torch.sum(torch.tensor([dice_grad[i].sum() for i in range(len(dice_grad))]))/dice_grad_mean.sum().item()
-            if dice_grad_mean==0:
-                scale=torch.tensor(1)
-            else:
-                scale = torch.abs(torch.sum(torch.tensor([rewards_exp[i].sum() for i in range(len(rewards_exp))]))/dice_grad_mean.sum().item())
+            dice_grad_norm = torch.cat(dice_wts_grad).norm().item()
+            for k in range(len(self.dice_wts)):
+                dice_grad_mean+=dice_wts_grad[k].sum()#/len(self.dice_wts)
+            if dice_grad_mean==0 or self.scale_type=='none':
+                scale=torch.tensor(1.)
+            elif self.scale_type=='norm':
+                scale = torch.cat(rewards_exp).norm()/dice_grad_norm
+            elif self.scale_type=='sum':
+                scale = torch.abs(torch.sum(torch.tensor([rewards_exp[p].sum() for p in range(len(rewards_exp))]))/dice_grad_mean.item())
             dice_grad_mean=dice_grad_mean*scale.item()
             if np.isnan(dice_grad_mean.item()):
                 self.exp_policy.layer_pre1.weight.grad=torch.zeros_like(self.exp_policy.layer_pre1.weight)
             else:
-                dice_grad_mean = dice_grad_mean#+torch.mean(torch.stack(kls, dim=0))*0.1
                 if self.algo=='trpo':
                     (torch.mean(torch.stack(kls, dim=0))*0.1).backward(retain_graph=True)
                     kl_grads = self.exp_policy.layer_pre1.weight.grad.abs().mean().item()
                 if self.baseline_type=='nn':
                     dice_grad_mean= torch.mean(torch.stack(value_loss, dim=0)) + dice_grad_mean
+                
+                # test_grads = np.array(test_grads)*scale.item()
+                # print(scale)
+                # print(torch.abs(torch.sum(torch.tensor([rewards_exp[p].sum() for p in range(len(rewards_exp))]))))
+                # print(torch.cat(dice_wts_grad).sum())
+                # ipdb.set_trace()
+                # grads_mean = torch.autograd.grad(dice_grad_mean, self.exp_policy.parameters(), retain_graph=True)[1].abs().mean().item()
                 dice_grad_mean.backward()
                 if np.isnan(self.exp_policy.layer_pre1.weight.grad.abs().mean().item()):
                     self.exp_policy.layer_pre1.weight.grad=torch.zeros_like(self.exp_policy.layer_pre1.weight)
         
-        (old_loss+wts1*reward_loss).backward()
-        # old_loss.backward()
-        nn.utils.clip_grad_norm_(self.policy.parameters(),self.clip)
-        nn.utils.clip_grad_norm_(self.reward_net.parameters(),self.clip)
-        nn.utils.clip_grad_norm_([self.z_old],self.clip)
-        nn.utils.clip_grad_norm_(self.exp_policy.parameters(),self.clip)
-        nn.utils.clip_grad_norm_(self.reward_net_outer.parameters(),self.clip)
+        if not self.update_exp_only:
+            (old_loss+wts1*reward_loss).backward()
+            # old_loss.backward()
+            nn.utils.clip_grad_norm_(self.policy.parameters(),self.clip)
+            nn.utils.clip_grad_norm_(self.reward_net.parameters(),self.clip)
+            nn.utils.clip_grad_norm_([self.z_old],self.clip)
+            nn.utils.clip_grad_norm_(self.exp_policy.parameters(),self.clip)
+            nn.utils.clip_grad_norm_(self.reward_net_outer.parameters(),self.clip)
 
-        grad_vals = [self.z_old.grad.abs().mean().item(),
-                     self.policy.layer_pre1.weight.grad.abs().mean().item(),
-                     self.exp_policy.layer_pre1.weight.grad.abs().mean().item(),
-                     self.reward_net.layer_pre1.weight.grad.abs().mean().item(),
-                     self.reward_net_outer.layer_pre1.weight.grad.abs().mean().item(),
-                     kl_grads]
-        print("z_grad {:.9f}".format(grad_vals[0]))
-        print("policy_grad {:.9f}".format(grad_vals[1]))
-        print("exp_policy_grad {:.9f}".format(grad_vals[2]))
-        print("kl_grads {:.9f}".format(grad_vals[5]))
-        print("reward_grad {:.9f}".format(grad_vals[3]))
-        print("reward_grad_outer {:.9f}\n".format(grad_vals[4]))
-        self.z_optimizer.step()
-        self.reward_optimizer.step()
-        self.reward_outer_optimizer.step()
-        self.policy_optimizer.step()
+            grad_vals = [self.z_old.grad.abs().mean().item(),
+                         self.policy.layer_pre1.weight.grad.abs().mean().item(),
+                         self.exp_policy.layer_pre1.weight.grad.abs().mean().item(),
+                         self.reward_net.layer_pre1.weight.grad.abs().mean().item(),
+                         self.reward_net_outer.layer_pre1.weight.grad.abs().mean().item(),
+                         kl_grads]
+            print("z_grad {:.9f}".format(grad_vals[0]))
+            print("policy_grad {:.9f}".format(grad_vals[1]))
+            print("exp_policy_grad {:.9f}".format(grad_vals[2]))
+            print("kl_grads {:.9f}".format(grad_vals[5]))
+            print("reward_grad {:.9f}".format(grad_vals[3]))
+            print("reward_grad_outer {:.9f}\n".format(grad_vals[4]))
+
+            self.z_optimizer.step()
+            self.reward_optimizer.step()
+            self.reward_outer_optimizer.step()
+            self.policy_optimizer.step()
+        else:
+            grad_vals = [0,
+                         0,
+                         self.exp_policy.layer_pre1.weight.grad.abs().mean().item(),
+                         0,
+                         0,
+                         kl_grads]
+            print("exp_policy_grad {:.9f}".format(grad_vals[2]))
+            print("kl_grads {:.9f}".format(grad_vals[5]))
+            
         self.exp_optimizer.step()
         if self.baseline_type=='nn':
             self.exp_baseline_optimizer.step()

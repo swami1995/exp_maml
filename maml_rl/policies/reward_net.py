@@ -89,3 +89,48 @@ class RewardNetMLP(nn.Module):
             return reward, new_z
         else:
             return reward
+
+
+class RewardNetMLP_shared(nn.Module):
+    def __init__(self, state_size, action_size, embedding_size, output_size=1, hidden_sizes=(),
+                 nonlinearity=F.relu):
+        super(RewardNetMLP_shared, self).__init__()
+        self.state_size = state_size
+        self.action_size = action_size
+        self.input_size = state_size+action_size                        ### NOTE: Needs to be changed for different kinds of inputs
+        self.embedding_size = embedding_size
+        self.output_size = output_size
+
+        self.hidden_sizes = hidden_sizes
+        self.nonlinearity = nonlinearity
+        self.num_layers = len(hidden_sizes) + 2
+
+        layer_sizes = (self.input_size,) + hidden_sizes  + (self.embedding_size,)
+        for i in range(1, self.num_layers):
+            self.add_module('layer_pre{0}'.format(i),
+                nn.Linear(layer_sizes[i - 1], layer_sizes[i]))
+
+        self.bias_out = nn.Parameter(torch.zeros(1))
+
+        self.apply(weight_init)
+
+    def forward(self, state, action, z, params=None, ph=False):
+        if ph:
+            z_ph = z.detach()
+            z_ph.requires_grad_()
+        input = torch.cat([state,action],dim=-1)
+        if params is None:
+            params = OrderedDict(self.named_parameters())
+        output = input
+        for i in range(1, self.num_layers):
+            output = F.linear(output,
+                weight=params['layer_pre{0}.weight'.format(i)],
+                bias=params['layer_pre{0}.bias'.format(i)])
+            output = self.nonlinearity(output)
+
+        reward = F.linear(output, weight=z,
+            bias=self.bias_out)
+        if ph:
+            return reward, z
+        else:
+            return reward
