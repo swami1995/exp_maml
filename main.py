@@ -14,6 +14,7 @@ from maml_rl.policies import CategoricalMLPPolicy, NormalMLPPolicy, RewardNetMLP
 from maml_rl.baseline import LinearFeatureBaseline
 from maml_rl.sampler import BatchSampler
 from maml_rl.envs.point_envs.point_env_2d_corner import MetaPointEnvCorner
+from maml_rl.utils.documentation import modify_excel
 
 from tensorboardX import SummaryWriter
 from arguments import get_args
@@ -55,9 +56,11 @@ def main(args):
         'AntPos-v0', 'HalfCheetahVel-v1', 'HalfCheetahDir-v1',
         '2DNavigation-v0', '2DPointEnvCorner-v0', '2DPointEnvCorner-v1', '2DPointEnvCustom-v1',
         'AntRandDirecEnv-v1', 'AntRandDirec2DEnv-v1', 'AntRandGoalEnv-v1', 'HalfCheetahRandDirecEnv-v1',
-        'HalfCheetahRandVelEnv-v1', 'HumanoidRandDirecEnv-v1', 'HumanoidRandDirec2DEnv-v1'])
+        'HalfCheetahRandVelEnv-v1', 'HumanoidRandDirecEnv-v1', 'HumanoidRandDirec2DEnv-v1', 
+        'Walker2DRandDirecEnv-v1', 'Walker2DRandVelEnv-v1'])
 
     if not args.test:
+
         save_folder = './saves/{0}'.format(args.env_name+'/'+args.output_folder)
         log_folder = './logs/{0}'.format(args.env_name+'/'+args.output_folder)
         if os.path.exists(save_folder):
@@ -86,10 +89,14 @@ def main(args):
 
         writer = SummaryWriter(log_folder)
 
+        comments_text = 'Do you want to add any comments to the logs?\n'
         with open(os.path.join(save_folder, 'config.json'), 'w') as f:
             config = {k: v for (k, v) in vars(args).items() if k != 'device'}
+            config['comments'] = input(comments_text)
             config.update(device=args.device.type)
             json.dump(config, f, indent=2)
+
+        modify_excel(config)
 
         # save script
         os.system("mkdir "+save_folder+'/code')

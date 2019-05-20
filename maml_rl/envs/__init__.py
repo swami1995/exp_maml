@@ -138,3 +138,17 @@ register(
     max_episode_steps=200
 )
 
+register(
+    'Walker2DRandDirecEnv-v1',
+    entry_point='maml_rl.envs.utils:mujoco_wrapper',
+    kwargs={'entry_point': 'maml_rl.envs.mujoco_envs.walker2d_rand_direc:Walker2DRandDirecEnv', 'promp_env': True},
+    max_episode_steps=200
+)
+
+register(
+    'Walker2DRandVelEnv-v1',
+    entry_point='maml_rl.envs.utils:mujoco_wrapper',
+    kwargs={'entry_point': 'maml_rl.envs.mujoco_envs.walker2d_rand_vel:Walker2DRandVelEnv', 'promp_env': True},
+    max_episode_steps=200
+)
+

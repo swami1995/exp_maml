@@ -32,7 +32,7 @@ class MetaLearner(object):
     """
     def __init__(self, sampler, policy, exp_policy, baseline, exp_baseline, reward_net, reward_net_outer, exp_baseline_targ, z_old, baseline_type,
                  embed_size=100, gamma=0.95, fast_lr=0.5, tau=1.0, lr=7e-4, eps=1e-5, device='cpu', algo='a2c', use_emaml=False, num_updates_outer=1,
-                 use_target=False, moving_params_normalize=torch.tensor([0.,1.])):
+                 use_target=True, moving_params_normalize=torch.tensor([0.,1.])):
         self.sampler = sampler
         self.policy = policy
         self.exp_policy = exp_policy
@@ -56,8 +56,9 @@ class MetaLearner(object):
         self.update_exp_only = False
         self.scale_type = 'none' # 'none' or 'norm' or 'sum' or 'abs_sum'
         self.M_type = 'returns' # 'rewards' or 'returns'
-        self.n_step_returns = 300 # horizon to calculate n_step returns
-        self.use_successor_reps = False
+        self.n_step_returns = 15 # horizon to calculate n_step returns
+        self.use_successor_reps = True
+        self.fix_z = True # don't update z
         if self.M_type=='rewards':
             print("M_type is using rewards. Hence setting use_successor_reps to False")
             self.use_successor_reps = False
@@ -82,7 +83,8 @@ class MetaLearner(object):
         self.clip_param = 0.2
         if z_old is None:
             self.z_old = nn.Parameter(torch.zeros((1,embed_size)))
-            nn.init.xavier_uniform_(self.z_old)
+            if not self.fix_z:
+                nn.init.xavier_uniform_(self.z_old)
         else:
             self.z_old = nn.Parameter(z_old)
 
@@ -91,7 +93,8 @@ class MetaLearner(object):
         self.use_emaml = use_emaml
 
         self.to(device)
-        self.z_optimizer = optim.Adam([self.z_old], lr=self.lr_z, eps=self.eps_z)
+        if not self.fix_z:
+            self.z_optimizer = optim.Adam([self.z_old], lr=self.lr_z, eps=self.eps_z)
         self.reward_optimizer = optim.Adam(self.reward_net.parameters(), lr=self.lr_r, eps=self.eps_r)
         self.policy_optimizer = optim.Adam(self.policy.parameters(), lr=self.lr_p, eps=self.eps_p)
         self.exp_optimizer = optim.Adam(self.exp_policy.parameters(), lr=self.lr_e, eps=self.eps_e)
@@ -104,8 +107,9 @@ class MetaLearner(object):
         factor = 0.95
         self.exp_optimizer_scheduler = optim.lr_scheduler.ReduceLROnPlateau(self.exp_optimizer, 'min', patience=patience, factor=factor,
                                                                             min_lr=self.lr_e*min_lr_factor)
-        self.z_optimizer_scheduler = optim.lr_scheduler.ReduceLROnPlateau(self.z_optimizer, 'min', patience=patience, factor=factor, 
-                                                                          min_lr=self.lr_z*min_lr_factor)
+        if not self.fix_z:
+            self.z_optimizer_scheduler = optim.lr_scheduler.ReduceLROnPlateau(self.z_optimizer, 'min', patience=patience, factor=factor, 
+                                                                              min_lr=self.lr_z*min_lr_factor)
         self.policy_optimizer_scheduler = optim.lr_scheduler.ReduceLROnPlateau(self.policy_optimizer, 'min', patience=patience, factor=factor, 
                                                                                min_lr=self.lr_p*min_lr_factor)
         self.reward_optimizer_scheduler = optim.lr_scheduler.ReduceLROnPlateau(self.reward_optimizer, 'min', patience=patience, factor=factor, 
@@ -397,7 +401,8 @@ class MetaLearner(object):
         return ((reward_loss_before, reward_loss_after)), old_loss, grad_vals
 
     def gradient_descent_update(self, old_loss, reward_loss, reward_loss_inner, episodes, j):
-        self.z_optimizer.zero_grad()
+        if not self.fix_z:
+            self.z_optimizer.zero_grad()
         self.reward_optimizer.zero_grad()
         self.reward_outer_optimizer.zero_grad()
         self.policy_optimizer.zero_grad()
@@ -407,7 +412,8 @@ class MetaLearner(object):
         self.exp_optimizer_scheduler.step(old_loss)
         self.reward_optimizer_scheduler.step(old_loss)
         self.policy_optimizer_scheduler.step(old_loss)
-        self.z_optimizer_scheduler.step(old_loss)
+        if not self.fix_z:
+            self.z_optimizer_scheduler.step(old_loss)
         # TODO : Maybe also add exp_baseline scheduler?
         self.iter+=1
         wts = math.exp(-self.iter/5)
@@ -459,7 +465,7 @@ class MetaLearner(object):
                     mask = mask.unsqueeze(2)
                 with torch.no_grad():
                     if self.reward_type == 'dice_reward':
-                        rewards_exp.append(self.fast_lr*torch.sum(dice_grad[i].unsqueeze(0)*self.z_grad_ph[i][0], dim=-1)/self.inner_losses[i]) 
+                        rewards_exp.append(self.fast_lr*torch.sum(dice_grad[i].unsqueeze(0)*self.z_grad_ph[i][0], dim=-1)/torch.max(self.inner_losses[i], 1e-8*torch.ones_like(self.inner_losses[i]))) 
                     ### NOTE : The reward depends on other networks (ENV?) hence it changes with time, what modifications to the standard value computations should we make?
                     ### NOTE : Maybe use a target network?
                     elif self.reward_type == 'env_reward':
@@ -533,7 +539,9 @@ class MetaLearner(object):
             elif self.scale_type=='abs_sum':
                 scale = torch.sum(torch.tensor([rewards_exp[p].abs().sum() for p in range(len(rewards_exp))]))/dice_grad_abs_sum.item()
             dice_grad_mean=dice_grad_mean*scale.item()
+            # ipdb.set_trace()
             if np.isnan(dice_grad_mean.item()):
+                print('dice_grad_mean is Nan. Need to debug' )
                 self.exp_policy.layer_pre1.weight.grad=torch.zeros_like(self.exp_policy.layer_pre1.weight)
             else:
                 if self.algo=='trpo':
@@ -549,14 +557,16 @@ class MetaLearner(object):
                 # grads_mean = torch.autograd.grad(dice_grad_mean, self.exp_policy.parameters(), retain_graph=True)[1].abs().mean().item()
                 dice_grad_mean.backward()
                 if np.isnan(self.exp_policy.layer_pre1.weight.grad.abs().mean().item()):
+                    print('exp_policy_gradients are Nan. Need to debug' )
                     self.exp_policy.layer_pre1.weight.grad=torch.zeros_like(self.exp_policy.layer_pre1.weight)
+            # ipdb.set_trace()
         
         if not self.update_exp_only:
             (old_loss+wts1*reward_loss).backward()
             # old_loss.backward()
             nn.utils.clip_grad_norm_(self.policy.parameters(),self.clip)
             nn.utils.clip_grad_norm_(self.reward_net.parameters(),self.clip)
-            nn.utils.clip_grad_norm_([self.z_old],self.clip)
+            # nn.utils.clip_grad_norm_([self.z_old],self.clip)
             nn.utils.clip_grad_norm_(self.reward_net_outer.parameters(),self.clip)
             nn.utils.clip_grad_norm_(self.exp_policy.parameters(),self.clip)
         
@@ -573,7 +583,8 @@ class MetaLearner(object):
             print("reward_grad {:.9f}".format(grad_vals[3]))
             print("reward_grad_outer {:.9f}\n".format(grad_vals[4]))
 
-            self.z_optimizer.step()
+            if not self.fix_z:
+                self.z_optimizer.step()
             self.reward_optimizer.step()
             self.reward_outer_optimizer.step()
             self.policy_optimizer.step()
