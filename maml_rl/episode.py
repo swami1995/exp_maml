@@ -87,6 +87,22 @@ class BatchEpisodes(object):
             self._returns = torch.from_numpy(returns).to(self.device)
         return self._returns
 
+    def nstep_returns(self, n):
+        if self._returns is None:
+            return_ = np.zeros(self.batch_size, dtype=np.float32)
+            returns = np.zeros((len(self), self.batch_size), dtype=np.float32)
+            rewards = self.rewards.cpu().numpy()
+            rewards_n_shifted = np.zeros((len(self), self.batch_size), dtype=np.float32)
+            rewards_n_shifted[:-n] = rewards[n:].copy()
+            mask = self.mask.cpu().numpy()
+            mask_n_shifted = np.zeros((len(self), self.batch_size), dtype=np.float32)
+            mask_n_shifted[:-n] = mask[n:].copy()
+            for i in range(len(self) - 1, -1, -1):
+                return_ = self.gamma * return_ + rewards[i] * mask[i] - rewards_n_shifted[i] * mask_n_shifted[i]
+                returns[i] = return_
+            self._returns = torch.from_numpy(returns).to(self.device)
+        return self._returns
+
     @property
     def mask(self):
         if self._mask is None:

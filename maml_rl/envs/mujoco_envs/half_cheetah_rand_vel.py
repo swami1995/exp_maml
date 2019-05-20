@@ -1,6 +1,6 @@
 import numpy as np
-from maml_zoo.envs.base import MetaEnv
-from maml_zoo.logger import logger
+from maml_rl.envs.base import MetaEnv
+# from maml_zoo.logger import logger
 import gym
 from gym.envs.mujoco.mujoco_env import MujocoEnv
 
@@ -54,14 +54,14 @@ class HalfCheetahRandVelEnv(MetaEnv, MujocoEnv, gym.utils.EzPickle):
     def viewer_setup(self):
         self.viewer.cam.distance = self.model.stat.extent * 0.5
 
-    def log_diagnostics(self, paths, prefix=''):
-        fwrd_vel = [path["env_infos"]['forward_vel'] for path in paths]
-        final_fwrd_vel = [path["env_infos"]['forward_vel'][-1] for path in paths]
-        ctrl_cost = [-path["env_infos"]['reward_ctrl'] for path in paths]
+    # def log_diagnostics(self, paths, prefix=''):
+    #     fwrd_vel = [path["env_infos"]['forward_vel'] for path in paths]
+    #     final_fwrd_vel = [path["env_infos"]['forward_vel'][-1] for path in paths]
+    #     ctrl_cost = [-path["env_infos"]['reward_ctrl'] for path in paths]
 
-        logger.logkv(prefix + 'AvgForwardVel', np.mean(fwrd_vel))
-        logger.logkv(prefix + 'AvgFinalForwardVel', np.mean(final_fwrd_vel))
-        logger.logkv(prefix + 'AvgCtrlCost', np.std(ctrl_cost))
+    #     logger.logkv(prefix + 'AvgForwardVel', np.mean(fwrd_vel))
+    #     logger.logkv(prefix + 'AvgFinalForwardVel', np.mean(final_fwrd_vel))
+    #     logger.logkv(prefix + 'AvgCtrlCost', np.std(ctrl_cost))
     def reset_task(self, task):
         self.goal_velocity = task
 

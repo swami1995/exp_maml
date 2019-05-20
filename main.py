@@ -191,16 +191,18 @@ def main(args):
         reward_net.load_state_dict(torch.load(load_folder+'reward-{0}.pt'.format(folder_idx[1])))
         z_old.copy_(torch.load(load_folder+'z_old-{0}.pt'.format(folder_idx[1]))['z_old'])
         reward_net_outer.load_state_dict(torch.load(load_folder+'reward_outer-{0}.pt'.format(folder_idx[1])))
-        # if args.baseline_type=='nn':
-        #     exp_baseline.load_state_dict(torch.load(load_folder+'value_net-{0}.pt'.format(folder_idx[1])))
-        #     exp_baseline_targ.load_state_dict(torch.load(load_folder+'value_net_targ-{0}.pt'.format(folder_idx[1])))
+        moving_params_normalize = torch.tensor(np.load('moving_params_normalize-{0}.npy'.format(folder_idx[1])))
+        if args.baseline_type=='nn':
+            exp_baseline.load_state_dict(torch.load(load_folder+'value_net-{0}.pt'.format(folder_idx[1])))
+            exp_baseline_targ.load_state_dict(torch.load(load_folder+'value_net_targ-{0}.pt'.format(folder_idx[1])))
     else:
         start_batch = 0
         z_old = None
-        
+        moving_params_normalize=torch.tensor([0.,1.])
     metalearner = MetaLearner(sampler, policy, exp_policy, baseline, exp_baseline, reward_net, reward_net_outer, exp_baseline_targ, z_old, 
                               args.baseline_type, embed_size=args.embed_size, gamma=args.gamma, fast_lr=args.fast_lr, tau=args.tau, lr=args.exp_lr, 
-                              eps=args.exp_eps, device=args.device, algo=args.algo, use_emaml=args.emaml, num_updates_outer=args.num_updates_outer)
+                              eps=args.exp_eps, device=args.device, algo=args.algo, use_emaml=args.emaml, num_updates_outer=args.num_updates_outer, 
+                              moving_params_normalize=moving_params_normalize)
     
     best_reward_after = -40000
     for batch in range(start_batch+1,args.num_batches):
@@ -251,6 +253,7 @@ def main(args):
                     torch.save(reward_net_outer.state_dict(), f)
                 with open(os.path.join(save_folder, 'z_old-{0}.pt'.format(batch)), 'wb') as f:
                     torch.save({'z_old':metalearner.z_old}, f)
+                np.save('moving_params_normalize-{0}.npy'.format(batch), metalearner.moving_params_normalize.cpu().numpy())
                 if args.baseline_type=='nn':
                     with open(os.path.join(save_folder, 'value_net-{0}.pt'.format(batch)), 'wb') as f:
                         torch.save(exp_baseline.state_dict(), f)

@@ -41,6 +41,9 @@ class RewardNetMLP(nn.Module):
 
         self.apply(weight_init)
 
+    def set_hyperparams(self, use_successor_rep=False, num_step_returns=300):
+        self.use_successor_rep=use_successor_rep
+        self.num_step_returns = num_step_returns
 
     def update_params(self, loss, step_size=0.5, first_order=False):
         """Apply one step of gradient descent on the loss function `loss`, with 
@@ -58,6 +61,7 @@ class RewardNetMLP(nn.Module):
 
 
     def forward(self, state, action, z, params=None, ph=False):
+        num_step_returns = min(self.num_step_returns, state.shape[0])
         new_z = z.unsqueeze(0).repeat(state.shape[0],state.shape[1],1)
         if ph:
             new_z_ph = new_z.detach()
@@ -77,6 +81,10 @@ class RewardNetMLP(nn.Module):
         # pdb.set_trace()
         # new_z = z.unsqueeze(0).repeat(output.shape[0],output.shape[1],1)
         # output = torch.cat([output,new_z], dim=-1)
+        if self.use_successor_rep:
+            output_cumsum = output.cumsum(0)/num_step_returns
+            output = output_cumsum - torch.cat([output_cumsum[num_step_returns:], torch.zeros_like(output_cumsum[:num_step_returns])], dim=0)
+
         for i in range(1, self.num_layers_post):
             output = F.linear(output,
                 weight=params['layer_post{0}.weight'.format(i+self.num_layers_pre-1)],

@@ -48,6 +48,6 @@ def moving_weighted_normalize(tensor, dim=None, weights=None, epsilon=1e-8, no_m
     if not no_mean:
         out-=moving_params[0]
     out.div_(moving_params[1] + epsilon)
-    if moving_params is None:
-        return out
+    # if moving_params is None:
+    #     return out
     return out, moving_params

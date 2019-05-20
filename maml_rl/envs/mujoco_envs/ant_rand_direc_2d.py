@@ -1,7 +1,7 @@
 import numpy as np
-from maml_zoo.envs.base import MetaEnv
+from maml_rl.envs.base import MetaEnv
 from gym.envs.mujoco.mujoco_env import MujocoEnv
-from maml_zoo.logger import logger
+# from maml_zoo.logger import logger
 import gym
 
 
@@ -67,16 +67,16 @@ class AntRandDirec2DEnv(MetaEnv, MujocoEnv, gym.utils.EzPickle):
     def viewer_setup(self):
         self.viewer.cam.distance = self.model.stat.extent * 0.5
 
-    def log_diagnostics(self, paths, prefix=''):
-        progs = [np.mean(path["env_infos"]["reward_forward"]) for path in paths]
-        ctrl_cost = [-np.mean(path["env_infos"]["reward_ctrl"]) for path in paths]
+    # def log_diagnostics(self, paths, prefix=''):
+    #     progs = [np.mean(path["env_infos"]["reward_forward"]) for path in paths]
+    #     ctrl_cost = [-np.mean(path["env_infos"]["reward_ctrl"]) for path in paths]
 
-        logger.logkv(prefix+'AverageForwardReturn', np.mean(progs))
-        logger.logkv(prefix+'MaxForwardReturn', np.max(progs))
-        logger.logkv(prefix+'MinForwardReturn', np.min(progs))
-        logger.logkv(prefix+'StdForwardReturn', np.std(progs))
+    #     logger.logkv(prefix+'AverageForwardReturn', np.mean(progs))
+    #     logger.logkv(prefix+'MaxForwardReturn', np.max(progs))
+    #     logger.logkv(prefix+'MinForwardReturn', np.min(progs))
+    #     logger.logkv(prefix+'StdForwardReturn', np.std(progs))
 
-        logger.logkv(prefix + 'AverageCtrlCost', np.mean(ctrl_cost))
+    #     logger.logkv(prefix + 'AverageCtrlCost', np.mean(ctrl_cost))
     def reset_task(self, task):
         self.goal_direction = task
 
