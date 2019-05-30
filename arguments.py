@@ -18,7 +18,7 @@ def get_args():
     # Policy network (relu activation function)
     parser.add_argument('--hidden-size', type=int, default=100,
         help='number of hidden units per layer')
-    parser.add_argument('--embed-size', type=int, default=64,
+    parser.add_argument('--embed-size', type=int, default=32,
         help='number of hidden units per layer')
     parser.add_argument('--num-layers-pre', type=int, default=2,
         help='number of hidden layers-pre')
@@ -76,7 +76,9 @@ def get_args():
     parser.add_argument('--baseline-type', default='lin', type=str, help='Exploration baseline : {lin, nn}')
     parser.add_argument('--reward-net-type', default='input_latent', type=str, help='{input_latent, output_latent}')
     parser.add_argument('--nonlinearity', default='relu', type=str, help='{relu, tanh, sigmoid}')
+    parser.add_argument('--seed', default=0, type=int, help='seed for numpy and torch')
 
     args = parser.parse_args()
     args.n_exp = min(args.n_exp, args.fast_batch_size)
+    args.num_plots = min(args.num_plots, args.meta_batch_size)
     return args

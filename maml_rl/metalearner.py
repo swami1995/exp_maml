@@ -56,9 +56,9 @@ class MetaLearner(object):
         self.update_exp_only = False
         self.scale_type = 'none' # 'none' or 'norm' or 'sum' or 'abs_sum'
         self.M_type = 'returns' # 'rewards' or 'returns'
-        self.n_step_returns = 15 # horizon to calculate n_step returns
-        self.use_successor_reps = True
-        self.fix_z = True # don't update z
+        self.n_step_returns = 300 # horizon to calculate n_step returns
+        self.use_successor_reps = False
+        self.fix_z = False # don't update z
         if self.M_type=='rewards':
             print("M_type is using rewards. Hence setting use_successor_reps to False")
             self.use_successor_reps = False
@@ -92,6 +92,7 @@ class MetaLearner(object):
         self.algo = algo
         self.use_emaml = use_emaml
 
+        self.moving_params_normalize = moving_params_normalize
         self.to(device)
         if not self.fix_z:
             self.z_optimizer = optim.Adam([self.z_old], lr=self.lr_z, eps=self.eps_z)
@@ -122,7 +123,6 @@ class MetaLearner(object):
         self.updated_params = []
         self.inner_losses = []
         self.exp_pis = []
-        self.moving_params_normalize = moving_params_normalize
         self.z_exp = torch.zeros_like(self.z)
         self.z_opt = (torch.ones((4,1,embed_size))*self.z_old.clone().detach().unsqueeze(0)).to(device)
         for i in range(4):
@@ -626,6 +626,7 @@ class MetaLearner(object):
         self.reward_net_outer.to(device, **kwargs)
         self.exp_baseline_targ.to(device, **kwargs)
         self.z = self.z_old.to(device, **kwargs)
+        self.moving_params_normalize = self.moving_params_normalize.to(device, **kwargs)
         self.device = device
 
     def get_returns(self, rewards, mask):

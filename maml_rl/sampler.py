@@ -45,7 +45,7 @@ class BatchSampler(object):
 
     def reset_task(self, task):
         tasks = [task for _ in range(self.num_workers)]
-        reset = self.envs.reset_task(tasks)
+        reset = self.envs.set_task(tasks)
         return all(reset)
 
     def sample_tasks(self, num_tasks):

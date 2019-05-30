@@ -42,6 +42,7 @@ def moving_weighted_normalize(tensor, dim=None, weights=None, epsilon=1e-8, no_m
         if moving_params[1]==1.:
             moving_params = torch.stack([mean, std])
         else:
+            # ipdb.set_trace()
             moving_params = moving_params + alpha * (torch.stack([mean, std]) - moving_params)
     else:
         moving_params = torch.stack([mean, std])

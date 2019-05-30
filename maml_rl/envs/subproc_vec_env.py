@@ -50,6 +50,9 @@ class EnvWorker(mp.Process):
             elif command == 'reset_task':
                 self.env.unwrapped.reset_task(data)
                 self.remote.send(True)
+            elif command == 'set_task':
+                self.env.unwrapped.set_task(data)
+                self.remote.send(True)
             elif command == 'close':
                 self.remote.close()
                 break
@@ -103,6 +106,11 @@ class SubprocVecEnv(gym.Env):
     def reset_task(self, tasks):
         for remote, task in zip(self.remotes, tasks):
             remote.send(('reset_task', task))
+        return np.stack([remote.recv() for remote in self.remotes])
+
+    def set_task(self, tasks):
+        for remote, task in zip(self.remotes, tasks):
+            remote.send(('set_task', task))
         return np.stack([remote.recv() for remote in self.remotes])
 
     def close(self):

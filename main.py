@@ -32,7 +32,12 @@ def plotting(episodes, batch, save_folder, n, n_exp):
         val_ep = episodes[i][1]
         task = episodes[i][0].task
         val_obs = val_ep.observations[:,0].cpu().numpy()
-        corners = np.array([np.array([-2,-2]), np.array([2,-2]), np.array([-2,2]), np.array([2, 2])])
+        # corners = np.array([np.array([-2,-2]), np.array([2,-2]), np.array([-2,2]), np.array([2, 2])])
+        radius = 3
+        center = [0,0]
+        num_points = 100
+        theta = np.random.uniform(high=np.pi, size=num_points)
+        corners = np.array([np.array(corner) for corner in zip(center[0]+radius*np.cos(theta), center[1]+radius*np.sin(theta))])
         # cmap = cm.get_cmap('PiYG', len(train_ep)+1)
         for j in range(len(train_ep)):
             for k in range(n_exp):
@@ -57,7 +62,10 @@ def main(args):
         '2DNavigation-v0', '2DPointEnvCorner-v0', '2DPointEnvCorner-v1', '2DPointEnvCustom-v1',
         'AntRandDirecEnv-v1', 'AntRandDirec2DEnv-v1', 'AntRandGoalEnv-v1', 'HalfCheetahRandDirecEnv-v1',
         'HalfCheetahRandVelEnv-v1', 'HumanoidRandDirecEnv-v1', 'HumanoidRandDirec2DEnv-v1', 
-        'Walker2DRandDirecEnv-v1', 'Walker2DRandVelEnv-v1'])
+        'Walker2DRandDirecEnv-v1', 'Walker2DRandVelEnv-v1', 'HopperRandParamsEnv-v1', 'Walker2DRandParamsEnv-v1'])
+
+    np.random.seed(args.seed)
+    torch.manual_seed(args.seed)
 
     if not args.test:
 
@@ -187,7 +195,7 @@ def main(args):
         exp_baseline_targ = exp_baseline
 
     baseline = LinearFeatureBaseline(int(np.prod(sampler.envs.observation_space.shape)))
-    
+    moving_params_normalize=torch.tensor([0.,1.])
     if args.load_dir is not None:
         z_old = torch.zeros((1,args.embed_size))
         folder_idx = args.load_dir.split('.')
@@ -198,14 +206,14 @@ def main(args):
         reward_net.load_state_dict(torch.load(load_folder+'reward-{0}.pt'.format(folder_idx[1])))
         z_old.copy_(torch.load(load_folder+'z_old-{0}.pt'.format(folder_idx[1]))['z_old'])
         reward_net_outer.load_state_dict(torch.load(load_folder+'reward_outer-{0}.pt'.format(folder_idx[1])))
-        moving_params_normalize = torch.tensor(np.load('moving_params_normalize-{0}.npy'.format(folder_idx[1])))
+        # moving_params_normalize = torch.tensor(np.load(load_folder+'moving_params_normalize-{0}.npy'.format(folder_idx[1])))
         if args.baseline_type=='nn':
             exp_baseline.load_state_dict(torch.load(load_folder+'value_net-{0}.pt'.format(folder_idx[1])))
             exp_baseline_targ.load_state_dict(torch.load(load_folder+'value_net_targ-{0}.pt'.format(folder_idx[1])))
     else:
         start_batch = 0
         z_old = None
-        moving_params_normalize=torch.tensor([0.,1.])
+        
     metalearner = MetaLearner(sampler, policy, exp_policy, baseline, exp_baseline, reward_net, reward_net_outer, exp_baseline_targ, z_old, 
                               args.baseline_type, embed_size=args.embed_size, gamma=args.gamma, fast_lr=args.fast_lr, tau=args.tau, lr=args.exp_lr, 
                               eps=args.exp_eps, device=args.device, algo=args.algo, use_emaml=args.emaml, num_updates_outer=args.num_updates_outer, 
@@ -215,6 +223,12 @@ def main(args):
     for batch in range(start_batch+1,args.num_batches):
         tasks = sampler.sample_tasks(num_tasks=args.meta_batch_size)
         episodes = metalearner.sample(tasks, first_order=args.first_order)
+        if args.load_dir is not None and args.test and args.env_name in ['2DNavigation-v0', '2DPointEnvCorner-v0', '2DPointEnvCorner-v1', '2DPointEnvCustom-v1']:
+            save_folder = './saves/'+ load_folder + args.output_folder
+            if not os.path.exists(save_folder):
+                os.makedirs(save_folder)
+            plotting(episodes, batch, save_folder, args.num_plots, args.n_exp)
+            sys.exit(0)
         r_loss, pg_loss, grad_vals = metalearner.step(episodes, max_kl=args.max_kl, cg_iters=args.cg_iters,
             cg_damping=args.cg_damping, ls_max_steps=args.ls_max_steps,
             ls_backtrack_ratio=args.ls_backtrack_ratio)
@@ -231,9 +245,6 @@ def main(args):
         print('Before update {:.3f} After update {:.3f}'.format(r_loss[0], r_loss[1]))
         print('PG Loss After Update {:.3f}'.format(pg_loss))
         print('Time {}\n'.format(end-start))
-
-        # if args.load_dir is not None:
-        #     sys.exit(0)
             
         if not args.test:
             writer.add_scalar('total_rewards/before_update', before_update_reward, batch)
@@ -260,7 +271,7 @@ def main(args):
                     torch.save(reward_net_outer.state_dict(), f)
                 with open(os.path.join(save_folder, 'z_old-{0}.pt'.format(batch)), 'wb') as f:
                     torch.save({'z_old':metalearner.z_old}, f)
-                np.save('moving_params_normalize-{0}.npy'.format(batch), metalearner.moving_params_normalize.cpu().numpy())
+                np.save(os.path.join(save_folder, 'moving_params_normalize-{0}.npy'.format(batch)), metalearner.moving_params_normalize.cpu().numpy())
                 if args.baseline_type=='nn':
                     with open(os.path.join(save_folder, 'value_net-{0}.pt'.format(batch)), 'wb') as f:
                         torch.save(exp_baseline.state_dict(), f)
