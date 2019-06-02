@@ -10,12 +10,14 @@ class BatchEpisodes(object):
         self.device = device
 
         self._observations_list = [[] for _ in range(batch_size)]
+        self._observations_next_list = [[] for _ in range(batch_size)]
         self._actions_list = [[] for _ in range(batch_size)]
         self._action_probs_list = [[] for _ in range(batch_size)]
         self._rewards_list = [[] for _ in range(batch_size)]
         self._mask_list = []
 
         self._observations = None
+        self._observations_next = None
         self._actions = None
         self._action_probs = None
         self._rewards = None
@@ -27,6 +29,7 @@ class BatchEpisodes(object):
         else:
             self.corners = [np.array([-2,-2]), np.array([2,-2]), np.array([-2,2]), np.array([2, 2])]
         self._task_id = np.argmax(task==self.corners)
+        self.num_samples = 0
 
     @property
     def observations(self):
@@ -39,6 +42,18 @@ class BatchEpisodes(object):
                 observations[:length, i] = np.stack(self._observations_list[i], axis=0)
             self._observations = torch.from_numpy(observations).to(self.device)
         return self._observations
+
+    @property
+    def observations_next(self):
+        if self._observations_next is None:
+            observation_shape = self._observations_next_list[0][0].shape
+            observations = np.zeros((len(self), self.batch_size)
+                + observation_shape, dtype=np.float32)
+            for i in range(self.batch_size):
+                length = len(self._observations_next_list[i])
+                observations[:length, i] = np.stack(self._observations_next_list[i], axis=0)
+            self._observations_next = torch.from_numpy(observations).to(self.device)
+        return self._observations_next
 
     @property
     def actions(self):
@@ -132,15 +147,20 @@ class BatchEpisodes(object):
 
         return advantages
 
-    def append(self, observations, actions, rewards, batch_ids, action_probs):
-        for observation, action, reward, batch_id, action_prob in zip(
-                observations, actions, rewards, batch_ids, action_probs):
+    def append(self, observations, actions, rewards, batch_ids, action_probs, observations_next, dones):
+        for observation, action, reward, batch_id, action_prob, observation_next, done in zip(
+                observations, actions, rewards, batch_ids, action_probs, observations_next, dones):
             if batch_id is None:
                 continue
+            elif batch_id > len(self._observations_list):
+
             self._observations_list[batch_id].append(observation.astype(np.float32))
             self._actions_list[batch_id].append(action.astype(np.float32))
             self._rewards_list[batch_id].append(reward.astype(np.float32))
             self._action_probs_list[batch_id].append(action_prob.astype(np.float32))
+            self._observations_next_list[batch_id].append(observation_next.astype(np.float32))
+            if done:
+                pass
 
     def __len__(self):
         return max(map(len, self._rewards_list))

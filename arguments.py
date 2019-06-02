@@ -77,6 +77,8 @@ def get_args():
     parser.add_argument('--reward-net-type', default='input_latent', type=str, help='{input_latent, output_latent}')
     parser.add_argument('--nonlinearity', default='relu', type=str, help='{relu, tanh, sigmoid}')
     parser.add_argument('--seed', default=0, type=int, help='seed for numpy and torch')
+    parser.add_argument('--M-type', default='returns', type=str, help='{rewrards, returns, next-state}')
+    parser.add_argument('--separate-actions', action='store_true', help='use a separate branch in reward net to read actions')
 
     args = parser.parse_args()
     args.n_exp = min(args.n_exp, args.fast_batch_size)

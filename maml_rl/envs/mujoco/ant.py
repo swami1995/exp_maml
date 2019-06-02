@@ -152,6 +152,10 @@ class AntDirEnv(AntEnv):
         self._task = task
         self._goal_dir = task['direction']
 
+    def set_task(self, task):
+        self._task = task
+        self._goal_dir = task['direction']
+
 class AntPosEnv(AntEnv):
     """Ant environment with target position. The code is adapted from
     https://github.com/cbfinn/maml_rl/blob/9c8e2ebd741cb0c7b8bf2d040c4caeeb8e06cc95/rllab/envs/mujoco/ant_env_rand_goal.py

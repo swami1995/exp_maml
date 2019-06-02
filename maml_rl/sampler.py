@@ -21,6 +21,7 @@ class BatchSampler(object):
         self.queue = mp.Queue()
         self.envs = SubprocVecEnv([make_env(env_name) for _ in range(num_workers)], queue=self.queue)
         self._env = gym.make(env_name)
+        self.total_steps = 0
 
     def sample(self, policy, task, params=None, gamma=0.95, device='cpu'):
         episodes = BatchEpisodes(batch_size=self.batch_size, task=task, corners=None, gamma=gamma, device=device)
@@ -39,8 +40,10 @@ class BatchSampler(object):
                 # TODO: Not sure need to check indexing
                 action_probs = action_probs_tensor.log_prob(actions_tensor).detach().cpu().numpy()   
             new_observations, rewards, dones, new_batch_ids, _ = self.envs.step(actions)
-            episodes.append(observations, actions, rewards, batch_ids, action_probs)
+            episodes.append(observations, actions, rewards, batch_ids, action_probs, new_observations, dones)
             observations, batch_ids = new_observations, new_batch_ids
+        self.total_steps += episodes.mask.sum()
+        ipdb.set_trace()
         return episodes
 
     def reset_task(self, task):

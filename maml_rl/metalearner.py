@@ -32,7 +32,7 @@ class MetaLearner(object):
     """
     def __init__(self, sampler, policy, exp_policy, baseline, exp_baseline, reward_net, reward_net_outer, exp_baseline_targ, z_old, baseline_type,
                  embed_size=100, gamma=0.95, fast_lr=0.5, tau=1.0, lr=7e-4, eps=1e-5, device='cpu', algo='a2c', use_emaml=False, num_updates_outer=1,
-                 use_target=True, moving_params_normalize=torch.tensor([0.,1.])):
+                 use_target=False, M_type='returns', moving_params_normalize=torch.tensor([0.,1.])):
         self.sampler = sampler
         self.policy = policy
         self.exp_policy = exp_policy
@@ -55,15 +55,21 @@ class MetaLearner(object):
             self.moving_normalize = True
         self.update_exp_only = False
         self.scale_type = 'none' # 'none' or 'norm' or 'sum' or 'abs_sum'
-        self.M_type = 'returns' # 'rewards' or 'returns'
-        self.n_step_returns = 300 # horizon to calculate n_step returns
-        self.use_successor_reps = False
-        self.fix_z = False # don't update z
-        if self.M_type=='rewards':
+        self.M_type = M_type # 'rewards' or 'returns' or 'next-state'
+        self.n_step_returns = 15 # horizon to calculate n_step returns
+        self.use_successor_reps = True
+        self.fix_z = True # don't update z
+        self.corrected_successor_rep = True
+        self.unbiased_dice = False
+        self.cumsum_conv_wts = torch.tensor([0]+list(reversed(range(1,self.n_step_returns)))).unsqueeze(0).unsqueeze(0).float().to(device)
+        self.use_successor_rep_action = True
+
+        if self.M_type!='returns':
             print("M_type is using rewards. Hence setting use_successor_reps to False")
             self.use_successor_reps = False
-        self.reward_net.set_hyperparams(self.use_successor_reps, self.n_step_returns)
-        self.reward_net_outer.set_hyperparams(self.use_successor_reps, self.n_step_returns)
+            self.unbiased_dice = False
+        self.reward_net.set_hyperparams(self.use_successor_reps, self.n_step_returns, self.corrected_successor_rep, self.use_successor_rep_action)
+        self.reward_net_outer.set_hyperparams(self.use_successor_reps, self.n_step_returns, self.corrected_successor_rep, self.use_successor_rep_action)
 
         self.lr_r = lr
         self.eps_r = eps
@@ -134,13 +140,21 @@ class MetaLearner(object):
         with Generalized Advantage Estimation (GAE, [3]).
         """
         if self.M_type=='returns':
-            states, actions, rewards = episodes.observations, episodes.actions, episodes.nstep_returns(self.n_step_returns)
+            states, actions, rewards = episodes.observations, episodes.actions, episodes.nstep_returns(self.n_step_returns).unsqueeze(-1)
         elif self.M_type=='rewards':
-            states, actions, rewards = episodes.observations, episodes.actions, episodes.rewards
-        rewards_pred, self.z_ph = self.reward_net(states,actions,self.z, ph=True)
-        rewards_pred = rewards_pred.squeeze(-1)
+            states, actions, rewards = episodes.observations, episodes.actions, episodes.rewards.unsqueeze(-1)
+        elif self.M_type=='next-state':
+            states, actions, rewards = episodes.observations, episodes.actions, episodes.observations_next
+            if self.reward_net.separate_actions:
+                rewards = rewards*episodes.mask.unsqueeze(-1)
+                rewards_cumsum = torch.cat([rewards, torch.zeros_like(rewards[:self.n_step_returns])], dim=0).cumsum(0)/self.n_step_returns
+                rewards = rewards_cumsum[self.n_step_returns:] - rewards_cumsum[:-self.n_step_returns]
+        rewards_pred, self.z_ph = self.reward_net(states,actions,self.z, episodes.mask.unsqueeze(-1), ph=True)
+        # rewards_pred = rewards_pred.squeeze(-1)
         loss = (rewards - rewards_pred)**2
-        loss_diff = torch.abs((rewards - rewards_pred)*2).detach()
+        loss = loss.sum(-1)
+        # ipdb.set_trace()
+        loss_diff = torch.abs(((rewards - rewards_pred)*2).sum(-1)).detach()
         # topkthvalue = torch.kthvalue(loss.cpu(), 9*rewards_pred.shape[0]//10, dim=0, keepdim=True)
         # loss = torch.ge(loss, topkthvalue.to(self.device)).float()*loss
 
@@ -165,9 +179,13 @@ class MetaLearner(object):
             self.dice_wts.append(dice_wts)
             self.dice_wts_detached.append(dice_wts.detach())
             self.dice_wts_detached[-1].requires_grad_()
-            # cum_wts = torch.exp(torch.log(self.dice_wts_detached[-1]).cumsum(dim=0))
-            self.inner_losses.append(loss_diff.detach())
-            loss *= self.dice_wts_detached[-1]
+            if self.unbiased_dice:
+                conv_sum = torch.conv1d(torch.log(self.dice_wts_detached[-1]).t().unsqueeze(1), self.cumsum_conv_wts, padding=self.n_step_returns-1)[:,:,self.n_step_returns-1:].squeeze(1).t()
+                cum_wts = torch.exp(torch.log(self.dice_wts_detached[-1]).cumsum(dim=0)*self.n_step_returns + conv_sum)
+                loss *= cum_wts
+            else:
+                self.inner_losses.append(loss_diff.detach())
+                loss *= self.dice_wts_detached[-1]
             # loss *= cum_wts
 
         # if loss.dim() > 2:
@@ -311,11 +329,20 @@ class MetaLearner(object):
             # old_pi = curr_params
             with torch.no_grad():
                 if self.M_type=='returns':
-                    states, actions, rewards = valid_episodes.observations, valid_episodes.actions, valid_episodes.nstep_returns(self.n_step_returns)
+                    states, actions, rewards = valid_episodes.observations, valid_episodes.actions, valid_episodes.nstep_returns(self.n_step_returns).unsqueeze(-1)
                 elif self.M_type=='rewards':
-                    states, actions, rewards = valid_episodes.observations, valid_episodes.actions, valid_episodes.rewards
-                rewards_pred = self.reward_net_outer(states,actions,curr_params['z']).squeeze(-1)
+                    states, actions, rewards = valid_episodes.observations, valid_episodes.actions, valid_episodes.rewards.unsqueeze(-1)
+                elif self.M_type=='next-state':
+                    states, actions, rewards = valid_episodes.observations, valid_episodes.actions, valid_episodes.observations_next
+                    if self.reward_net.separate_actions:
+                        rewards = rewards*valid_episodes.mask.unsqueeze(-1)
+                        rewards_cumsum = torch.cat([rewards, torch.zeros_like(rewards[:self.n_step_returns])], dim=0).cumsum(0)/self.n_step_returns
+                        rewards = rewards_cumsum[self.n_step_returns:] - rewards_cumsum[:-self.n_step_returns]
+
+                rewards_pred = self.reward_net_outer(states,actions,curr_params['z'], valid_episodes.mask.unsqueeze(-1))
+                # ipdb.set_trace()
                 reward_loss = (rewards - rewards_pred)**2
+                reward_loss = reward_loss.sum(-1)
                 reward_loss_before = reward_loss.mean()
             with torch.set_grad_enabled(old_pi is None):
 
@@ -353,11 +380,19 @@ class MetaLearner(object):
 
                 # Reward Objective
                 if self.M_type=='returns':
-                    states, actions, rewards = valid_episodes.observations, valid_episodes.actions, valid_episodes.nstep_returns(self.n_step_returns)
+                    states, actions, rewards = valid_episodes.observations, valid_episodes.actions, valid_episodes.nstep_returns(self.n_step_returns).unsqueeze(-1)
                 elif self.M_type=='rewards':
-                    states, actions, rewards = valid_episodes.observations, valid_episodes.actions, valid_episodes.rewards
-                rewards_pred = self.reward_net_outer(states,actions,updated_params['z'].detach()).squeeze(-1)
+                    states, actions, rewards = valid_episodes.observations, valid_episodes.actions, valid_episodes.rewards.unsqueeze(-1)
+                elif self.M_type=='next-state':
+                    states, actions, rewards = valid_episodes.observations, valid_episodes.actions, valid_episodes.observations_next
+                    if self.reward_net.separate_actions:
+                        rewards = rewards*valid_episodes.mask.unsqueeze(-1)
+                        rewards_cumsum = torch.cat([rewards, torch.zeros_like(rewards[:self.n_step_returns])], dim=0).cumsum(0)/self.n_step_returns
+                        rewards = rewards_cumsum[self.n_step_returns:] - rewards_cumsum[:-self.n_step_returns]
+
+                rewards_pred = self.reward_net_outer(states,actions,updated_params['z'].detach(), mask=valid_episodes.mask.unsqueeze(-1))
                 reward_loss = (rewards - rewards_pred)**2
+                reward_loss = reward_loss.sum(-1)
                 reward_losses.append(reward_loss.mean())
                 reward_losses_before.append(reward_loss_before)
         
@@ -378,7 +413,7 @@ class MetaLearner(object):
             # updated_params['z'] = torch.ones_like(self.z)
             # updated_params['z'][:self.embed_size//2]*=float(train_episodes.task[0])
             # updated_params['z'][self.embed_size//2:]*=float(train_episodes.task[1])
-            rewards_pred = self.reward_net(states,actions,updated_params['z']).squeeze()
+            rewards_pred = self.reward_net(states,actions,updated_params['z'], valid_episodes.mask.unsqueeze(-1)).squeeze()
             reward_loss = (rewards - rewards_pred)**2
             reward_losses.append(reward_loss.mean())
             reward_losses_before.append(reward_loss_before)
@@ -420,14 +455,18 @@ class MetaLearner(object):
         wts1 = 1
         dice_wts_grad = []
 
-        dice_grad = torch.autograd.grad(old_loss, self.updated_params, retain_graph=True)
-        # dice_grad = torch.autograd.grad(old_loss+wts*reward_loss,self.updated_params,retain_graph=True)   
-        # dice_grad_detached = torch.autograd.grad(old_loss,self.dice_wts_detached,retain_graph=True)
-        
         rewards_exp = []
         kls = []
         kl_grads = 0.
         value_loss = []
+
+        if self.unbiased_dice:
+            rewards_exp = torch.autograd.grad(old_loss, self.dice_wts_detached, retain_graph=True)
+        else:
+            dice_grad = torch.autograd.grad(old_loss, self.updated_params, retain_graph=True)
+        # dice_grad = torch.autograd.grad(old_loss+wts*reward_loss,self.updated_params,retain_graph=True)   
+        # dice_grad_detached = torch.autograd.grad(old_loss,self.dice_wts_detached,retain_graph=True)
+        
         # if j>4:
         if self.use_emaml:
             for i, (train_episodes, valid_episodes) in enumerate(episodes):
@@ -464,13 +503,14 @@ class MetaLearner(object):
                 if train_episodes.actions.dim() > 2:
                     mask = mask.unsqueeze(2)
                 with torch.no_grad():
-                    if self.reward_type == 'dice_reward':
-                        rewards_exp.append(self.fast_lr*torch.sum(dice_grad[i].unsqueeze(0)*self.z_grad_ph[i][0], dim=-1)/torch.max(self.inner_losses[i], 1e-8*torch.ones_like(self.inner_losses[i]))) 
-                    ### NOTE : The reward depends on other networks (ENV?) hence it changes with time, what modifications to the standard value computations should we make?
-                    ### NOTE : Maybe use a target network?
-                    elif self.reward_type == 'env_reward':
-                        rewards_exp.append(train_episodes.rewards)
-                    # reward_detatched = dice_grad_detached[i]
+                    if not self.unbiased_dice:
+                        if self.reward_type == 'dice_reward':
+                            rewards_exp.append(self.fast_lr*torch.sum(dice_grad[i].unsqueeze(0)*self.z_grad_ph[i][0], dim=-1)/torch.max(self.inner_losses[i], 1e-8*torch.ones_like(self.inner_losses[i]))) 
+                        ### NOTE : The reward depends on other networks (ENV?) hence it changes with time, what modifications to the standard value computations should we make?
+                        ### NOTE : Maybe use a target network?
+                        elif self.reward_type == 'env_reward':
+                            rewards_exp.append(train_episodes.rewards)
+                        # reward_detatched = dice_grad_detached[i]
                     if self.moving_normalize:
                         normalized_rewards, self.moving_params_normalize = moving_weighted_normalize(rewards_exp[-1], no_mean=True, moving_params=self.moving_params_normalize) 
                     else:
@@ -508,7 +548,6 @@ class MetaLearner(object):
                     #     print(advantages.abs().mean())
                     #     print(action_loss.abs().mean())
                     #     print(action_loss.mean())
-                    #     ipdb.set_trace()
                 elif self.algo == 'trpo':
                     surr1 = ratio * advantages.detach()
                     action_loss = -surr1
@@ -521,7 +560,6 @@ class MetaLearner(object):
                     else:
                         value_loss.append((values.squeeze(-1) - returns.detach()).pow(2).mean(0) * 0.5)
                 # if j==4:
-                #     ipdb.set_trace()
                 dice_wts_grad.append(action_loss)
 
             dice_grad_mean = 0
@@ -539,7 +577,7 @@ class MetaLearner(object):
             elif self.scale_type=='abs_sum':
                 scale = torch.sum(torch.tensor([rewards_exp[p].abs().sum() for p in range(len(rewards_exp))]))/dice_grad_abs_sum.item()
             dice_grad_mean=dice_grad_mean*scale.item()
-            # ipdb.set_trace()
+
             if np.isnan(dice_grad_mean.item()):
                 print('dice_grad_mean is Nan. Need to debug' )
                 self.exp_policy.layer_pre1.weight.grad=torch.zeros_like(self.exp_policy.layer_pre1.weight)
@@ -553,13 +591,11 @@ class MetaLearner(object):
                 # print(scale)
                 # print(torch.abs(torch.sum(torch.tensor([rewards_exp[p].sum() for p in range(len(rewards_exp))]))))
                 # print(torch.cat(dice_wts_grad).sum())
-                # ipdb.set_trace()
                 # grads_mean = torch.autograd.grad(dice_grad_mean, self.exp_policy.parameters(), retain_graph=True)[1].abs().mean().item()
                 dice_grad_mean.backward()
                 if np.isnan(self.exp_policy.layer_pre1.weight.grad.abs().mean().item()):
                     print('exp_policy_gradients are Nan. Need to debug' )
                     self.exp_policy.layer_pre1.weight.grad=torch.zeros_like(self.exp_policy.layer_pre1.weight)
-            # ipdb.set_trace()
         
         if not self.update_exp_only:
             (old_loss+wts1*reward_loss).backward()

@@ -155,21 +155,28 @@ def main(args):
             nonlinearity=nonlinearity)
     
     # reward prediction network
+    output_shape_reward_net = 1
+    if args.M_type == 'next-state':
+        output_shape_reward_net = sampler.envs.observation_space.shape[-1]
     if args.reward_net_type == 'input_latent':
         reward_net = RewardNetMLP(
             int(np.prod(sampler.envs.observation_space.shape)),
             sampler.envs.action_space.shape[0],
             args.embed_size,
+            separate_actions = args.separate_actions,
             hidden_sizes_pre_embedding=(args.hidden_size,) * args.num_layers_pre,
             hidden_sizes_post_embedding=(args.hidden_size,) * args.num_layers_post, 
-            nonlinearity=nonlinearity)
+            nonlinearity=nonlinearity, 
+            output_size = output_shape_reward_net)
         reward_net_outer = RewardNetMLP(
             int(np.prod(sampler.envs.observation_space.shape)),
             sampler.envs.action_space.shape[0],
             args.embed_size,
+            separate_actions = args.separate_actions,
             hidden_sizes_pre_embedding=(args.hidden_size,) * args.num_layers_pre,
             hidden_sizes_post_embedding=(args.hidden_size,) * args.num_layers_post, 
-            nonlinearity=nonlinearity)
+            nonlinearity=nonlinearity, 
+            output_size = output_shape_reward_net)
     elif args.reward_net_type=='output_latent':
         reward_net = RewardNetMLP_shared(
             int(np.prod(sampler.envs.observation_space.shape)),
@@ -206,7 +213,7 @@ def main(args):
         reward_net.load_state_dict(torch.load(load_folder+'reward-{0}.pt'.format(folder_idx[1])))
         z_old.copy_(torch.load(load_folder+'z_old-{0}.pt'.format(folder_idx[1]))['z_old'])
         reward_net_outer.load_state_dict(torch.load(load_folder+'reward_outer-{0}.pt'.format(folder_idx[1])))
-        # moving_params_normalize = torch.tensor(np.load(load_folder+'moving_params_normalize-{0}.npy'.format(folder_idx[1])))
+        moving_params_normalize = torch.tensor(np.load(load_folder+'moving_params_normalize-{0}.npy'.format(folder_idx[1])))
         if args.baseline_type=='nn':
             exp_baseline.load_state_dict(torch.load(load_folder+'value_net-{0}.pt'.format(folder_idx[1])))
             exp_baseline_targ.load_state_dict(torch.load(load_folder+'value_net_targ-{0}.pt'.format(folder_idx[1])))
@@ -217,7 +224,7 @@ def main(args):
     metalearner = MetaLearner(sampler, policy, exp_policy, baseline, exp_baseline, reward_net, reward_net_outer, exp_baseline_targ, z_old, 
                               args.baseline_type, embed_size=args.embed_size, gamma=args.gamma, fast_lr=args.fast_lr, tau=args.tau, lr=args.exp_lr, 
                               eps=args.exp_eps, device=args.device, algo=args.algo, use_emaml=args.emaml, num_updates_outer=args.num_updates_outer, 
-                              moving_params_normalize=moving_params_normalize)
+                              moving_params_normalize=moving_params_normalize, M_type=args.M_type)
     
     best_reward_after = -40000
     for batch in range(start_batch+1,args.num_batches):
@@ -238,7 +245,7 @@ def main(args):
         after_update_reward = total_rewards([ep.rewards for _, ep in episodes])
         end = datetime.datetime.now()
 
-        print('Batch {:d}/{:d}'.format(batch+1, args.num_batches))
+        print('Batch {:d}/{:d}, Num_steps {:d}'.format(batch+1, args.num_batches, int(sampler.total_steps)))
         print('Rewards')
         print('Before update {:.3f} After update {:.3f}'.format(before_update_reward, after_update_reward))
         print('Reward loss')
@@ -258,6 +265,7 @@ def main(args):
             writer.add_scalar('grad_vals/reward_net', grad_vals[3], batch)
             writer.add_scalar('grad_vals/reward_net_outer', grad_vals[4], batch)
             writer.add_scalar('grad_vals/kl_grads', grad_vals[5], batch)
+            writer.add_scalar('Num_steps', sampler.total_steps, batch)
 
             # Save policy network
             if batch%args.save_every==0 or after_update_reward > best_reward_after:
