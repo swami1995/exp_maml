@@ -363,7 +363,8 @@ class MetaLearner(object):
                     log_ratio = torch.sum(log_ratio, dim=2)
                 ratio = torch.exp(log_ratio)
 
-                self.baseline_exp += valid_episodes.rewards.sum(0)
+                # ipdb.set_trace()
+                # self.baseline_exp += valid_episodes.rewards.sum(0)
                 # self.baseline_exp+=torch.log(valid_episodes.rewards.sum(0)+1)
 
                 surr1 = ratio * advantages
@@ -396,7 +397,7 @@ class MetaLearner(object):
                 reward_losses.append(reward_loss.mean())
                 reward_losses_before.append(reward_loss_before)
         
-        self.baseline_exp/=(len(episodes)*valid_episodes.rewards.shape[1])
+        # self.baseline_exp/=(len(episodes)*valid_episodes.rewards.shape[1])
         return (torch.mean(torch.stack(losses, dim=0)),
                 torch.mean(torch.stack(kls, dim=0)), 
                 torch.mean(torch.stack(reward_losses,dim=0)),
@@ -556,13 +557,14 @@ class MetaLearner(object):
 
                 if self.baseline_type=='nn':
                     if self.use_target:
-                        value_loss.append((values.squeeze(-1) - returns_targ.detach()).pow(2).mean(0) * 0.5)
+                        value_loss.append((values.squeeze(-1) - returns_targ.detach()).pow(2).mean(0).view(-1) * 0.5)
                     else:
-                        value_loss.append((values.squeeze(-1) - returns.detach()).pow(2).mean(0) * 0.5)
+                        value_loss.append((values.squeeze(-1) - returns.detach()).pow(2).mean(0).view(-1) * 0.5)
                 # if j==4:
-                dice_wts_grad.append(action_loss)
+                dice_wts_grad.append(action_loss.view(-1))
 
             dice_grad_mean = 0
+            # ipdb.set_trace()
             dice_wts_grad_cat = torch.cat(dice_wts_grad)
             dice_grad_norm = dice_wts_grad_cat.norm()
             dice_grad_abs_sum = dice_wts_grad_cat.abs().sum()
@@ -586,7 +588,7 @@ class MetaLearner(object):
                     (torch.mean(torch.stack(kls, dim=0))*0.1).backward(retain_graph=True)
                     kl_grads = self.exp_policy.layer_pre1.weight.grad.abs().mean().item()
                 if self.baseline_type=='nn':
-                    dice_grad_mean= torch.mean(torch.stack(value_loss, dim=0)) + dice_grad_mean
+                    dice_grad_mean= torch.mean(torch.cat(value_loss)) + dice_grad_mean
                 
                 # print(scale)
                 # print(torch.abs(torch.sum(torch.tensor([rewards_exp[p].sum() for p in range(len(rewards_exp))]))))

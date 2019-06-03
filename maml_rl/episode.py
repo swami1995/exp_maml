@@ -1,10 +1,10 @@
 import numpy as np
 import torch
 import torch.nn.functional as F
-
+import ipdb
 
 class BatchEpisodes(object):
-    def __init__(self, batch_size, task, corners, gamma=0.95, device='cpu'):
+    def __init__(self, batch_size, task, corners, gamma=0.95, device='cpu', max_episode_length=200):
         self.batch_size = batch_size
         self.gamma = gamma
         self.device = device
@@ -15,6 +15,7 @@ class BatchEpisodes(object):
         self._action_probs_list = [[] for _ in range(batch_size)]
         self._rewards_list = [[] for _ in range(batch_size)]
         self._mask_list = []
+        self.dones = {}
 
         self._observations = None
         self._observations_next = None
@@ -30,6 +31,7 @@ class BatchEpisodes(object):
             self.corners = [np.array([-2,-2]), np.array([2,-2]), np.array([-2,2]), np.array([2, 2])]
         self._task_id = np.argmax(task==self.corners)
         self.num_samples = 0
+        self.max_episode_length = max_episode_length
 
     @property
     def observations(self):
@@ -39,7 +41,11 @@ class BatchEpisodes(object):
                 + observation_shape, dtype=np.float32)
             for i in range(self.batch_size):
                 length = len(self._observations_list[i])
-                observations[:length, i] = np.stack(self._observations_list[i], axis=0)
+                try:
+                    observations[:length, i] = np.stack(self._observations_list[i], axis=0)
+                except ValueError:
+                    ipdb.set_trace()
+                    continue
             self._observations = torch.from_numpy(observations).to(self.device)
         return self._observations
 
@@ -51,7 +57,11 @@ class BatchEpisodes(object):
                 + observation_shape, dtype=np.float32)
             for i in range(self.batch_size):
                 length = len(self._observations_next_list[i])
-                observations[:length, i] = np.stack(self._observations_next_list[i], axis=0)
+                try:
+                    observations[:length, i] = np.stack(self._observations_next_list[i], axis=0)
+                except ValueError:
+                    ipdb.set_trace()
+                    continue
             self._observations_next = torch.from_numpy(observations).to(self.device)
         return self._observations_next
 
@@ -63,7 +73,11 @@ class BatchEpisodes(object):
                 + action_shape, dtype=np.float32)
             for i in range(self.batch_size):
                 length = len(self._actions_list[i])
-                actions[:length, i] = np.stack(self._actions_list[i], axis=0)
+                try:
+                    actions[:length, i] = np.stack(self._actions_list[i], axis=0)
+                except ValueError:
+                    ipdb.set_trace()
+                    continue
             self._actions = torch.from_numpy(actions).to(self.device)
         return self._actions
 
@@ -75,7 +89,11 @@ class BatchEpisodes(object):
                 + action_probs_shape, dtype=np.float32)
             for i in range(self.batch_size):
                 length = len(self._action_probs_list[i])
-                action_probs[:length, i] = np.stack(self._action_probs_list[i], axis=0)
+                try:
+                    action_probs[:length, i] = np.stack(self._action_probs_list[i], axis=0)
+                except ValueError:
+                    ipdb.set_trace()
+                    continue
             self._action_probs = torch.from_numpy(action_probs).to(self.device)
         return self._action_probs
 
@@ -85,7 +103,11 @@ class BatchEpisodes(object):
             rewards = np.zeros((len(self), self.batch_size), dtype=np.float32)
             for i in range(self.batch_size):
                 length = len(self._rewards_list[i])
-                rewards[:length, i] = np.stack(self._rewards_list[i], axis=0)
+                try:
+                    rewards[:length, i] = np.stack(self._rewards_list[i], axis=0)
+                except ValueError:
+                    ipdb.set_trace()
+                    continue
             self._rewards = torch.from_numpy(rewards).to(self.device)
         return self._rewards
 
@@ -152,7 +174,12 @@ class BatchEpisodes(object):
                 observations, actions, rewards, batch_ids, action_probs, observations_next, dones):
             if batch_id is None:
                 continue
-            elif batch_id > len(self._observations_list):
+            while batch_id >= len(self._observations_list):
+                self._observations_list.append([])
+                self._actions_list.append([])
+                self._rewards_list.append([])
+                self._action_probs_list.append([])
+                self._observations_next_list.append([])
 
             self._observations_list[batch_id].append(observation.astype(np.float32))
             self._actions_list[batch_id].append(action.astype(np.float32))
@@ -160,7 +187,25 @@ class BatchEpisodes(object):
             self._action_probs_list[batch_id].append(action_prob.astype(np.float32))
             self._observations_next_list[batch_id].append(observation_next.astype(np.float32))
             if done:
-                pass
+                self.num_samples += len(self._rewards_list[batch_id])
+                self.prev_batch_id = batch_id
+                self.dones[batch_id]=True
+
+    def adjust_to_num_samples(self, prev_batch_ids_to_remove):
+        diff = self.num_samples - self.max_episode_length
+        self._observations_list[self.prev_batch_id][:-diff]
+        self._actions_list[self.prev_batch_id][:-diff]
+        self._rewards_list[self.prev_batch_id][:-diff]
+        self._action_probs_list[self.prev_batch_id][:-diff]
+        self._observations_next_list[self.prev_batch_id][:-diff]
+        for batch_id in sorted(prev_batch_ids_to_remove, reverse=True):
+            if batch_id!=self.prev_batch_id:
+                self._observations_list.pop(batch_id)
+                self._actions_list.pop(batch_id)
+                self._rewards_list.pop(batch_id)
+                self._action_probs_list.pop(batch_id)
+                self._observations_next_list.pop(batch_id)
+        self.batch_size=len(self._rewards_list)
 
     def __len__(self):
         return max(map(len, self._rewards_list))

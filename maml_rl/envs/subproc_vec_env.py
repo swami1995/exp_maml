@@ -29,6 +29,8 @@ class EnvWorker(mp.Process):
             try:
                 self.task_id = self.queue.get(True)
                 self.done = (self.task_id is None)
+                if self.queue.empty():
+                    self.queue.put(self.task_id+1)
             except queue.Empty:
                 self.done = True
         observation = (np.zeros(self.env.observation_space.shape,

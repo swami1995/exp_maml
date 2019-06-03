@@ -266,6 +266,7 @@ def main(args):
             writer.add_scalar('grad_vals/reward_net_outer', grad_vals[4], batch)
             writer.add_scalar('grad_vals/kl_grads', grad_vals[5], batch)
             writer.add_scalar('Num_steps', sampler.total_steps, batch)
+            writer.add_scalar('Num_steps', sampler.num_episodes, batch)
 
             # Save policy network
             if batch%args.save_every==0 or after_update_reward > best_reward_after:

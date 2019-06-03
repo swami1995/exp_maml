@@ -4,7 +4,7 @@ import multiprocessing as mp
 import ipdb
 from maml_rl.envs.subproc_vec_env import SubprocVecEnv
 from maml_rl.episode import BatchEpisodes
-
+import numpy as np
 
 def make_env(env_name):
     def _make_env():
@@ -22,16 +22,18 @@ class BatchSampler(object):
         self.envs = SubprocVecEnv([make_env(env_name) for _ in range(num_workers)], queue=self.queue)
         self._env = gym.make(env_name)
         self.total_steps = 0
+        self.max_episode_steps = self._env.spec.max_episode_steps * batch_size
+        self.num_episodes = 0
 
     def sample(self, policy, task, params=None, gamma=0.95, device='cpu'):
-        episodes = BatchEpisodes(batch_size=self.batch_size, task=task, corners=None, gamma=gamma, device=device)
-        for i in range(self.batch_size):
+        episodes = BatchEpisodes(batch_size=self.batch_size, task=task, max_episode_length=self.max_episode_steps, corners=None, gamma=gamma, device=device)
+        for i in range(self.batch_size+self.num_workers):
             self.queue.put(i)
-        for _ in range(self.num_workers):
-            self.queue.put(None)
+        # for _ in range(self.num_workers):
+        #     self.queue.put(None)
         observations, batch_ids = self.envs.reset()
         dones = [False]
-        while (not all(dones)) or (not self.queue.empty()):
+        while episodes.num_samples<self.max_episode_steps:
             with torch.no_grad():
                 observations_tensor = torch.from_numpy(observations).type(torch.FloatTensor).to(device=device)
                 action_probs_tensor = policy(observations_tensor, params['z'])
@@ -41,9 +43,14 @@ class BatchSampler(object):
                 action_probs = action_probs_tensor.log_prob(actions_tensor).detach().cpu().numpy()   
             new_observations, rewards, dones, new_batch_ids, _ = self.envs.step(actions)
             episodes.append(observations, actions, rewards, batch_ids, action_probs, new_observations, dones)
+            prev_batch_ids = batch_ids
             observations, batch_ids = new_observations, new_batch_ids
+        episodes.adjust_to_num_samples(prev_batch_ids)
+        self.num_episodes += episodes.batch_size -1
         self.total_steps += episodes.mask.sum()
-        ipdb.set_trace()
+        # print("total_steps: {0},  num_episodes: {1}".format(self.total_steps, self.num_episodes))
+        while not self.queue.empty():
+            self.queue.get()
         return episodes
 
     def reset_task(self, task):
