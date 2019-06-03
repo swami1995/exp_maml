@@ -19,7 +19,7 @@ class BatchSampler(object):
         self.num_workers = num_workers
         
         self.queue = mp.Queue()
-        self.envs = SubprocVecEnv([make_env(env_name) for _ in range(num_workers)], queue=self.queue)
+        self.envs = SubprocVecEnv([make_env(env_name) for _ in range(num_workers)], queue=self.queue, queue_max = 300)
         self._env = gym.make(env_name)
         self.total_steps = 0
         self.max_episode_steps = self._env.spec.max_episode_steps * batch_size
@@ -27,7 +27,7 @@ class BatchSampler(object):
 
     def sample(self, policy, task, params=None, gamma=0.95, device='cpu'):
         episodes = BatchEpisodes(batch_size=self.batch_size, task=task, max_episode_length=self.max_episode_steps, corners=None, gamma=gamma, device=device)
-        for i in range(self.batch_size+self.num_workers):
+        for i in range(300):
             self.queue.put(i)
         # for _ in range(self.num_workers):
         #     self.queue.put(None)

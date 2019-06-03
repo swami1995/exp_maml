@@ -29,10 +29,11 @@ class EnvWorker(mp.Process):
             try:
                 self.task_id = self.queue.get(True)
                 self.done = (self.task_id is None)
-                if self.queue.empty():
-                    self.queue.put(self.task_id+1)
+                # if self.queue.empty():
+                #     self.queue.put(self.task_id)
             except queue.Empty:
                 self.done = True
+                ipdb.set_trace()
         observation = (np.zeros(self.env.observation_space.shape,
             dtype=np.float32) if self.done else self.env.reset())
         return observation
@@ -65,7 +66,7 @@ class EnvWorker(mp.Process):
                 raise NotImplementedError()
 
 class SubprocVecEnv(gym.Env):
-    def __init__(self, env_factory, queue):
+    def __init__(self, env_factory, queue, queue_max):
         self.lock = mp.Lock()
         self.remotes, self.work_remotes = zip(*[mp.Pipe() for _ in env_factory])
         self.workers = [EnvWorker(remote, env_fn, queue, self.lock)
@@ -77,6 +78,7 @@ class SubprocVecEnv(gym.Env):
             remote.close()
         self.waiting = False
         self.closed = False
+        self.queue_max = queue_max
 
         self.remotes[0].send(('get_spaces', None))
         observation_space, action_space = self.remotes[0].recv()
