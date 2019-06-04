@@ -95,7 +95,7 @@ class RewardNetMLP(nn.Module):
             if self.separate_actions:
                 input = torch.cat([state,new_z], dim=-1)
             else:
-                input = torch.cat([state,action,new_z],dim=-1)
+                input = torch.cat([state,action,new_z],dim=-1)        
         if params is None:
             params = OrderedDict(self.named_parameters())
         output = input
@@ -110,7 +110,7 @@ class RewardNetMLP(nn.Module):
         # output = torch.cat([output,new_z], dim=-1)
         if self.use_successor_rep:
             if self.corrected_successor_rep:
-                output = output#*mask
+                output = output*mask
                 output_cumsum = torch.cat([output, torch.zeros_like(output[:num_step_returns])], dim=0).cumsum(0)/num_step_returns
                 output = output_cumsum[num_step_returns:] - output_cumsum[:-num_step_returns]
             else:

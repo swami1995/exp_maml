@@ -152,15 +152,12 @@ class BatchEpisodes(object):
                 observations, actions, rewards, batch_ids, action_probs, observations_next, dones):
             if batch_id is None:
                 continue
-            elif batch_id > len(self._observations_list):
 
             self._observations_list[batch_id].append(observation.astype(np.float32))
             self._actions_list[batch_id].append(action.astype(np.float32))
             self._rewards_list[batch_id].append(reward.astype(np.float32))
             self._action_probs_list[batch_id].append(action_prob.astype(np.float32))
             self._observations_next_list[batch_id].append(observation_next.astype(np.float32))
-            if done:
-                pass
 
     def __len__(self):
         return max(map(len, self._rewards_list))

@@ -43,7 +43,7 @@ class BatchSampler(object):
             episodes.append(observations, actions, rewards, batch_ids, action_probs, new_observations, dones)
             observations, batch_ids = new_observations, new_batch_ids
         self.total_steps += episodes.mask.sum()
-        ipdb.set_trace()
+        # ipdb.set_trace()
         return episodes
 
     def reset_task(self, task):
