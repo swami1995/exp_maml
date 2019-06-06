@@ -158,7 +158,7 @@ def main(args):
     output_shape_reward_net = 1
     if args.M_type == 'next-state':
         output_shape_reward_net = sampler.envs.observation_space.shape[-1]
-    if args.reward_net_type == 'input_latent':
+    if args.reward_net_type == 'input_latent':  # Ignore this if condition - It's true by default. I was just testing something earlier (I'm keeping it in case I need it again later)
         reward_net = RewardNetMLP(
             int(np.prod(sampler.envs.observation_space.shape)),
             sampler.envs.action_space.shape[0],
@@ -177,19 +177,19 @@ def main(args):
             hidden_sizes_post_embedding=(args.hidden_size,) * args.num_layers_post, 
             nonlinearity=nonlinearity, 
             output_size = output_shape_reward_net)
-    elif args.reward_net_type=='output_latent':
-        reward_net = RewardNetMLP_shared(
-            int(np.prod(sampler.envs.observation_space.shape)),
-            sampler.envs.action_space.shape[0],
-            args.embed_size,
-            hidden_sizes=(args.hidden_size,) * args.num_layers_pre, 
-            nonlinearity=nonlinearity)
-        reward_net_outer = RewardNetMLP_shared(
-            int(np.prod(sampler.envs.observation_space.shape)),
-            sampler.envs.action_space.shape[0],
-            args.embed_size,
-            hidden_sizes=(args.hidden_size,) * args.num_layers_pre, 
-            nonlinearity=nonlinearity)
+    # elif args.reward_net_type=='output_latent':
+    #     reward_net = RewardNetMLP_shared(
+    #         int(np.prod(sampler.envs.observation_space.shape)),
+    #         sampler.envs.action_space.shape[0],
+    #         args.embed_size,
+    #         hidden_sizes=(args.hidden_size,) * args.num_layers_pre, 
+    #         nonlinearity=nonlinearity)
+    #     reward_net_outer = RewardNetMLP_shared(
+    #         int(np.prod(sampler.envs.observation_space.shape)),
+    #         sampler.envs.action_space.shape[0],
+    #         args.embed_size,
+    #         hidden_sizes=(args.hidden_size,) * args.num_layers_pre, 
+    #         nonlinearity=nonlinearity)
     if args.baseline_type=='nn':
         exp_baseline = ValueNetMLP(int(np.prod(sampler.envs.observation_space.shape)),
             hidden_sizes_pre_embedding=(args.hidden_size,) * args.num_layers_pre, 

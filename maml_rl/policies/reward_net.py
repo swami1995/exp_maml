@@ -110,9 +110,14 @@ class RewardNetMLP(nn.Module):
         # output = torch.cat([output,new_z], dim=-1)
         if self.use_successor_rep:
             if self.corrected_successor_rep:
+                # ipdb.set_trace()
                 output = output*mask
-                output_cumsum = torch.cat([output, torch.zeros_like(output[:num_step_returns])], dim=0).cumsum(0)/num_step_returns
-                output = output_cumsum[num_step_returns:] - output_cumsum[:-num_step_returns]
+                output_cumsum = torch.cat([output, torch.zeros_like(output[:num_step_returns])], dim=0).cumsum(0)#/num_step_returns
+                mask_cumsum = torch.cat([mask, torch.zeros_like(mask[:num_step_returns])], dim=0).cumsum(0)#/num_step_returns
+                output_cumsum_target = torch.cat([torch.zeros_like(output)[:1],output_cumsum], dim=0)
+                mask_cumsum_target = torch.cat([torch.zeros_like(mask)[:1],mask_cumsum], dim=0)
+                output = (output_cumsum[num_step_returns:] - output_cumsum_target[:-num_step_returns-1])/ \
+                            (mask_cumsum[num_step_returns:] - mask_cumsum_target[:-num_step_returns-1] + 1e-5)
             else:
                 output_cumsum = output.cumsum(0)/num_step_returns
                 output = output_cumsum - torch.cat([output_cumsum[num_step_returns:], torch.zeros_like(output_cumsum[:num_step_returns])], dim=0)

@@ -46,30 +46,35 @@ class MetaLearner(object):
         self.tau = tau
         self.lamda = 0.1
 
-        self.use_target = use_target ## False
-        self.baseline_type = baseline_type ## 'lin'
-        self.num_updates_outer = num_updates_outer ## 5
-        self.reward_type = 'dice_reward' ## or 'env_reward'
-        self.moving_normalize = False ## False???
+        self.use_target = use_target ## False - Whether to use target network for exploration policy
+        self.baseline_type = baseline_type ## 'lin' - Exploration policy baseline type (neural network baseline, 
+                                           ## i.e, standard value functions v/s linear baseline)
+        self.num_updates_outer = num_updates_outer ## 5 - Number of outer loop updates after each round of sampling
+        self.reward_type = 'dice_reward' ## or 'env_reward' - reward type for exploration policy (choosing between standard
+                                         ## dice type rewards and maximizing environment rewards)
+        self.moving_normalize = False ## False??? - normalization scheme for rewards (computed through dice) for exploration policy
         if self.baseline_type=='nn':
-            self.moving_normalize = True
-        self.update_exp_only = False
-        self.scale_type = 'none' # 'none' or 'norm' or 'sum' or 'abs_sum'
-        self.M_type = M_type # 'rewards' or 'returns' or 'next-state'
+            self.moving_normalize = True ## Setting True for a neural network baseline
+        self.update_exp_only = False ### Can be removed (was being used for debugging)
+        self.scale_type = 'none' # 'none' or 'norm' or 'sum' or 'abs_sum' 
+        self.M_type = M_type # 'rewards' or 'returns' or 'next-state' 
         self.n_step_returns = 15 # horizon to calculate n_step returns
-        self.use_successor_reps = True
+        self.use_successor_reps = True 
         self.fix_z = True # don't update z
-        self.corrected_successor_rep = True
-        self.unbiased_dice = False
+        self.corrected_successor_rep = True # Whether to use predecessor/ successor reperesentation
+        self.unbiased_dice = False # Ignore this for now 
         self.cumsum_conv_wts = torch.tensor([0]+list(reversed(range(1,self.n_step_returns)))).unsqueeze(0).unsqueeze(0).float().to(device)
-        self.use_successor_rep_action = True
+        self.use_successor_rep_action = True ## This is only relevant when using next-state predictions. Choosing successor representations for actions alone 
+                                             ## (Ask me when you get to it (difficult to explain using comments))
 
         if self.M_type!='returns':
             print("M_type is using rewards. Hence setting use_successor_reps to False")
             self.use_successor_reps = False
             self.unbiased_dice = False
-        self.reward_net.set_hyperparams(self.use_successor_reps, self.n_step_returns, self.corrected_successor_rep, self.use_successor_rep_action)
-        self.reward_net_outer.set_hyperparams(self.use_successor_reps, self.n_step_returns, self.corrected_successor_rep, self.use_successor_rep_action)
+        self.reward_net.set_hyperparams(self.use_successor_reps, self.n_step_returns, 
+                                        self.corrected_successor_rep, self.use_successor_rep_action)
+        self.reward_net_outer.set_hyperparams(self.use_successor_reps, self.n_step_returns, 
+                                        self.corrected_successor_rep, self.use_successor_rep_action)
 
         self.lr_r = lr
         self.eps_r = eps
@@ -77,7 +82,7 @@ class MetaLearner(object):
         self.eps_z = eps
         self.lr_p = lr
         self.eps_p = eps
-        self.lr_e = lr * 0.1
+        self.lr_e = lr# * 0.1  # Original results were obtained using the 0.1 factor
         self.eps_e = eps
         self.lr_ro = lr
         self.eps_ro = eps
@@ -180,7 +185,8 @@ class MetaLearner(object):
             self.dice_wts_detached.append(dice_wts.detach())
             self.dice_wts_detached[-1].requires_grad_()
             if self.unbiased_dice:
-                conv_sum = torch.conv1d(torch.log(self.dice_wts_detached[-1]).t().unsqueeze(1), self.cumsum_conv_wts, padding=self.n_step_returns-1)[:,:,self.n_step_returns-1:].squeeze(1).t()
+                conv_sum = torch.conv1d(torch.log(self.dice_wts_detached[-1]).t().unsqueeze(1), 
+                            self.cumsum_conv_wts, padding=self.n_step_returns-1)[:,:,self.n_step_returns-1:].squeeze(1).t()
                 cum_wts = torch.exp(torch.log(self.dice_wts_detached[-1]).cumsum(dim=0)*self.n_step_returns + conv_sum)
                 loss *= cum_wts
             else:
@@ -505,16 +511,19 @@ class MetaLearner(object):
                 with torch.no_grad():
                     if not self.unbiased_dice:
                         if self.reward_type == 'dice_reward':
-                            rewards_exp.append(self.fast_lr*torch.sum(dice_grad[i].unsqueeze(0)*self.z_grad_ph[i][0], dim=-1)/torch.max(self.inner_losses[i], 1e-8*torch.ones_like(self.inner_losses[i]))) 
-                        ### NOTE : The reward depends on other networks (ENV?) hence it changes with time, what modifications to the standard value computations should we make?
+                            rewards_exp.append(self.fast_lr*torch.sum(dice_grad[i].unsqueeze(0)*self.z_grad_ph[i][0], dim=-1)
+                                            /torch.max(self.inner_losses[i], 1e-8*torch.ones_like(self.inner_losses[i]))) 
+                        ### NOTE : The reward depends on other networks (ENV?) hence it changes with time, what modifications to the 
+                        ###        standard value computations should we make?
                         ### NOTE : Maybe use a target network?
                         elif self.reward_type == 'env_reward':
                             rewards_exp.append(train_episodes.rewards)
                         # reward_detatched = dice_grad_detached[i]
                     if self.moving_normalize:
-                        normalized_rewards, self.moving_params_normalize = moving_weighted_normalize(rewards_exp[-1], no_mean=True, moving_params=self.moving_params_normalize) 
+                        normalized_rewards, self.moving_params_normalize = moving_weighted_normalize(rewards_exp[-1], no_mean=True,
+                                                                                         moving_params=self.moving_params_normalize) 
                     else:
-                        normalized_rewards, self.moving_params_normalize = moving_weighted_normalize(rewards_exp[-1], no_mean=True)#, moving_params=self.moving_params_normalize) 
+                        normalized_rewards, self.moving_params_normalize = moving_weighted_normalize(rewards_exp[-1], no_mean=True)
                     ### NOTE : Does it make sense to write normalized rewards for a value function? Maybe keep a moving average or something like bnorm? 
                     ### But bnorm isn't stable in RL --> investigate!
                 
