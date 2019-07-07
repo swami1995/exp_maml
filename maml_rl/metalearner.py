@@ -60,13 +60,13 @@ class MetaLearner(object):
         self.M_type = M_type # 'rewards' or 'returns' or 'next-state' 
         self.n_step_returns = 15 # horizon to calculate n_step returns
         self.use_successor_reps = True 
-        self.fix_z = True # don't update z
+        self.fix_z = True
+         # don't update z
         self.corrected_successor_rep = True # Whether to use predecessor/ successor reperesentation
         self.unbiased_dice = False # Ignore this for now 
         self.cumsum_conv_wts = torch.tensor([0]+list(reversed(range(1,self.n_step_returns)))).unsqueeze(0).unsqueeze(0).float().to(device)
         self.use_successor_rep_action = True ## This is only relevant when using next-state predictions. Choosing successor representations for actions alone 
                                              ## (Ask me when you get to it (difficult to explain using comments))
-
         if self.M_type!='returns':
             print("M_type is using rewards. Hence setting use_successor_reps to False")
             self.use_successor_reps = False
@@ -82,7 +82,7 @@ class MetaLearner(object):
         self.eps_z = eps
         self.lr_p = lr
         self.eps_p = eps
-        self.lr_e = lr# * 0.1  # Original results were obtained using the 0.1 factor
+        self.lr_e = lr  # Original results were obtained using the 0.1 factor
         self.eps_e = eps
         self.lr_ro = lr
         self.eps_ro = eps
@@ -512,7 +512,7 @@ class MetaLearner(object):
                     if not self.unbiased_dice:
                         if self.reward_type == 'dice_reward':
                             rewards_exp.append(self.fast_lr*torch.sum(dice_grad[i].unsqueeze(0)*self.z_grad_ph[i][0], dim=-1)
-                                            /torch.max(self.inner_losses[i], 1e-8*torch.ones_like(self.inner_losses[i]))) 
+                                            /torch.max(self.inner_losses[i], 1e-8*torch.ones_like(self.inner_losses[i])))
                         ### NOTE : The reward depends on other networks (ENV?) hence it changes with time, what modifications to the 
                         ###        standard value computations should we make?
                         ### NOTE : Maybe use a target network?
