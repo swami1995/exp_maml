@@ -47,15 +47,9 @@ class MetaLearner(object):
         self.corrected_successor_rep = True # Whether to use predecessor/ successor reperesentation
         self.unbiased_dice = False # Ignore this for now 
         self.cumsum_conv_wts = torch.tensor([0]+list(reversed(range(1,self.n_step_returns)))).unsqueeze(0).unsqueeze(0).float().to(device)
-<<<<<<< HEAD
-        self.use_successor_rep_action = True ## This is only relevant when using next-state predictions. Choosing successor representations for actions alone 
-                                             ## (Ask me when you get to it (difficult to explain using comments))
-=======
         self.use_successor_rep_action = True # This is only relevant when using next-state predictions. 
                                              # Choosing successor representations for actions alone 
                                              # (Ask me when you get to it (difficult to explain using comments))
-
->>>>>>> e3fbd8a5ee9ac53e414cb53f263a7779a5acdf74
         if self.M_type!='returns':
             print("M_type is using rewards. Hence setting use_successor_reps to False")
             self.use_successor_reps = False
@@ -391,17 +385,10 @@ class MetaLearner(object):
                     if not self.unbiased_dice:
                         if self.reward_type == 'dice_reward':
                             rewards_exp.append(self.fast_lr*torch.sum(dice_grad[i].unsqueeze(0)*self.z_grad_ph[i][0], dim=-1)
-<<<<<<< HEAD
                                             /torch.max(self.inner_losses[i], 1e-8*torch.ones_like(self.inner_losses[i])))
                         ### NOTE : The reward depends on other networks (ENV?) hence it changes with time, what modifications to the 
                         ###        standard value computations should we make?
                         ### NOTE : Maybe use a target network?
-=======
-                                            /torch.max(self.inner_losses[i], 1e-8*torch.ones_like(self.inner_losses[i]))) 
-                        # NOTE : The reward depends on other networks (ENV?) hence it changes with time, what modifications to the 
-                        #        standard value computations should we make?
-                        # NOTE : Maybe use a target network?
->>>>>>> e3fbd8a5ee9ac53e414cb53f263a7779a5acdf74
                         elif self.reward_type == 'env_reward':
                             rewards_exp.append(train_episodes.rewards)
                         # reward_detatched = dice_grad_detached[i]
