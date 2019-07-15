@@ -1,5 +1,7 @@
 ## Learning Exploration Strategies for Model Agnostic Meta-Reinforcement Learning
 
+Switch to branch another_sparse_branch_ppo to run the experiments on our model. The code in master is used to run experiments on the vanilla maml-trpo model.
+
 ## Getting started
 To avoid any conflict with your existing Python setup, and to keep this project self-contained, it is suggested to work in a virtual environment with [`virtualenv`](http://docs.python-guide.org/en/latest/dev/virtualenvs/). To install `virtualenv`:
 ```
