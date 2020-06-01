@@ -1,5 +1,5 @@
 import argparse
-
+import ipdb
 
 def get_args():
     parser = argparse.ArgumentParser(description='Reinforcement learning with '
@@ -70,6 +70,7 @@ def get_args():
     parser.add_argument('--savedir', default='saves')
     parser.add_argument('--save-every', default=20, type=int)
     parser.add_argument('--test', action='store_true', help='do not log anything')
+    parser.add_argument('--dontplot', action='store_true', help='dont plot anything')
     parser.add_argument('--algo', default='ppo', help='{ppo, a2c, trpo}')
     parser.add_argument('--emaml', action='store_true', help='run emaml')
     parser.add_argument('--n-exp', default=5, type=int, help='number of exploration traj to plot')
@@ -77,9 +78,8 @@ def get_args():
     parser.add_argument('--reward-net-type', default='input_latent', type=str, help='{input_latent, output_latent}')
     parser.add_argument('--nonlinearity', default='relu', type=str, help='{relu, tanh, sigmoid}')
     parser.add_argument('--seed', default=0, type=int, help='seed for numpy and torch')
-    parser.add_argument('--M-type', default='returns', type=str, help='{rewrards, returns, next-state}')
+    parser.add_argument('--M-type', default='returns', type=str, help='{rewards, returns, next-state}')
     parser.add_argument('--separate-actions', action='store_true', help='use a separate branch in reward net to read actions')
-
     args = parser.parse_args()
     args.n_exp = min(args.n_exp, args.fast_batch_size)
     args.num_plots = min(args.num_plots, args.meta_batch_size)

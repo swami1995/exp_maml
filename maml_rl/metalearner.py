@@ -38,11 +38,11 @@ class MetaLearner(object):
         if self.baseline_type=='nn':
             self.moving_normalize = True # Setting True for a neural network baseline
         self.update_exp_only = False # Can be removed (was being used for debugging)
-        self.scale_type = 'none' # 'none' or 'norm' or 'sum' or 'abs_sum' 
+        self.scale_type = 'norm' # 'none' or 'norm' or 'sum' or 'abs_sum' 
         self.M_type = M_type # 'rewards' or 'returns' or 'next-state' 
-        self.n_step_returns = 15 # horizon to calculate n_step returns
+        self.n_step_returns = 100#15 # horizon to calculate n_step returns
         self.use_successor_reps = True 
-        self.fix_z = True
+        self.fix_z = False
          # don't update z
         self.corrected_successor_rep = True # Whether to use predecessor/ successor reperesentation
         self.unbiased_dice = False # Ignore this for now 
@@ -65,7 +65,7 @@ class MetaLearner(object):
         self.eps_z = eps
         self.lr_p = lr
         self.eps_p = eps
-        self.lr_e = lr  # Original results were obtained using the 0.1 factor
+        self.lr_e = lr#*0.1  # Original results were obtained using the 0.1 factor
         self.eps_e = eps
         self.lr_ro = lr
         self.eps_ro = eps
@@ -303,14 +303,14 @@ class MetaLearner(object):
         
         self.baseline_exp /= (len(episodes) * valid_episodes.rewards.shape[1])
         return (torch.mean(torch.stack(losses, dim=0)),
-                torch.mean(torch.stack(kls, dim=0)), 
                 torch.mean(torch.stack(reward_losses,dim=0)),
                 torch.mean(torch.stack(reward_losses_before,dim=0)),
                 torch.mean(torch.stack(reward_losses_inner,dim=0)))
 
     def step(self, episodes):
+        self.old_exp_pis = []
         for j in range(self.num_updates_outer):
-            old_loss, _, reward_loss_after, reward_loss_before, reward_loss_inner = self.surrogate_loss_rewardnet(episodes, exp_update='dice')
+            old_loss, reward_loss_after, reward_loss_before, reward_loss_inner = self.surrogate_loss_rewardnet(episodes, exp_update='dice')
             scaled_old_loss = old_loss * 10
             grad_vals = self.gradient_descent_update(scaled_old_loss, reward_loss_after, reward_loss_inner, episodes, j)
 
@@ -475,7 +475,8 @@ class MetaLearner(object):
             # old_loss.backward()
             nn.utils.clip_grad_norm_(self.policy.parameters(),self.clip)
             nn.utils.clip_grad_norm_(self.reward_net.parameters(),self.clip)
-            # nn.utils.clip_grad_norm_([self.z_old],self.clip)
+            if not self.fix_z:
+                nn.utils.clip_grad_norm_([self.z_old],self.clip)
             nn.utils.clip_grad_norm_(self.reward_net_outer.parameters(),self.clip)
             nn.utils.clip_grad_norm_(self.exp_policy.parameters(),self.clip)
         

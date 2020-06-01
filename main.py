@@ -236,9 +236,9 @@ def main(args):
                 os.makedirs(save_folder)
             plotting(episodes, batch, save_folder, args.num_plots, args.n_exp)
             sys.exit(0)
-        r_loss, pg_loss, grad_vals = metalearner.step(episodes, max_kl=args.max_kl, cg_iters=args.cg_iters,
-            cg_damping=args.cg_damping, ls_max_steps=args.ls_max_steps,
-            ls_backtrack_ratio=args.ls_backtrack_ratio)
+        r_loss, pg_loss, grad_vals = metalearner.step(episodes)#, max_kl=args.max_kl, cg_iters=args.cg_iters,
+            # cg_damping=args.cg_damping, ls_max_steps=args.ls_max_steps,
+            # ls_backtrack_ratio=args.ls_backtrack_ratio)
         metalearner.update_targs_value()
 
         before_update_reward = total_rewards([ep.rewards for ep, _ in episodes])
@@ -287,7 +287,7 @@ def main(args):
                         torch.save(exp_baseline_targ.state_dict(), f)
                 best_reward_after = after_update_reward
                 # Plotting figure
-                if args.env_name in ['2DNavigation-v0', '2DPointEnvCorner-v0', '2DPointEnvCorner-v1', '2DPointEnvCustom-v1']:
+                if args.env_name in ['2DNavigation-v0', '2DPointEnvCorner-v0', '2DPointEnvCorner-v1', '2DPointEnvCustom-v1'] and not args.dontplot:
                     plotting(episodes, batch, save_folder, args.num_plots, args.n_exp)
 
 
